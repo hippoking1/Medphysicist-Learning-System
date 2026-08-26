@@ -1,0 +1,234 @@
+<template id="template-dashboard">
+  <div class="page-header">
+    <div class="page-title">
+      <h2>備考學習儀表板</h2>
+      <p id="dashboard-subtitle">讀書百遍，其義自見。掌握備考數據，祝您一次通過物理師認證。</p>
+    </div>
+    <div id="countdown-badge" class="btn btn-secondary" style="font-weight: 700; border-color: var(--primary);">
+      <span class="material-icons-round" style="color: var(--primary);">event</span>
+      <span>考試倒數 <span id="dash-countdown" style="color: var(--secondary); font-size: 1.15rem; font-family: monospace;">---</span> 天</span>
+    </div>
+  </div>
+  
+  <!-- 核心指標行 -->
+  <div class="grid-cols-4" style="margin-bottom: 2rem;">
+    <!-- 進度指標 -->
+    <div class="glass-card" style="display: flex; align-items: center; gap: 1rem;">
+      <div style="background: rgba(0, 242, 254, 0.1); padding: 0.75rem; border-radius: 12px;">
+        <span class="material-icons-round" style="color: var(--secondary); font-size: 2rem;">speed</span>
+      </div>
+      <div>
+        <div style="font-size: 0.8rem; color: var(--text-muted); font-weight: 500;">學習完成度</div>
+        <div style="font-size: 1.5rem; font-weight: 700;"><span id="dash-progress-percent">0</span>%</div>
+        <div style="font-size: 0.7rem; color: var(--text-dark);"><span id="dash-completed-units">0</span> / <span id="dash-total-units">0</span> 單元</div>
+      </div>
+    </div>
+    
+    <!-- 學習時數 -->
+    <div class="glass-card" style="display: flex; align-items: center; gap: 1rem;">
+      <div style="background: rgba(138, 43, 226, 0.1); padding: 0.75rem; border-radius: 12px;">
+        <span class="material-icons-round" style="color: var(--primary); font-size: 2rem;">schedule</span>
+      </div>
+      <div>
+        <div style="font-size: 0.8rem; color: var(--text-muted); font-weight: 500;">累計學習時數</div>
+        <div style="font-size: 1.5rem; font-weight: 700;"><span id="dash-hours">0.0</span> <span style="font-size: 0.9rem;">小時</span></div>
+        <div style="font-size: 0.7rem; color: var(--text-dark);">每日目標: <span id="dash-daily-goal">45</span> 分鐘</div>
+      </div>
+    </div>
+    
+    <!-- 學習 Streak -->
+    <div class="glass-card" style="display: flex; align-items: center; gap: 1rem;">
+      <div style="background: rgba(255, 179, 0, 0.1); padding: 0.75rem; border-radius: 12px;">
+        <span class="material-icons-round" style="color: var(--warning); font-size: 2rem;">local_fire_department</span>
+      </div>
+      <div>
+        <div style="font-size: 0.8rem; color: var(--text-muted); font-weight: 500;">連續學習天數</div>
+        <div style="font-size: 1.5rem; font-weight: 700;"><span id="dash-streak">0</span> <span style="font-size: 0.9rem;">天</span></div>
+        <div style="font-size: 0.7rem; color: var(--text-dark);" id="dash-streak-sub">保持下去！養成學習習慣</div>
+      </div>
+    </div>
+    
+    <!-- 待複習卡片 -->
+    <div class="glass-card" style="display: flex; align-items: center; gap: 1rem;">
+      <div style="background: rgba(0, 230, 118, 0.1); padding: 0.75rem; border-radius: 12px;">
+        <span class="material-icons-round" style="color: var(--success); font-size: 2rem;">style</span>
+      </div>
+      <div>
+        <div style="font-size: 0.8rem; color: var(--text-muted); font-weight: 500;">待複習卡片</div>
+        <div style="font-size: 1.5rem; font-weight: 700;"><span id="dash-due-cards">0</span> <span style="font-size: 0.9rem;">張</span></div>
+        <div style="font-size: 0.7rem; color: var(--text-dark);">利用間隔重複科學記憶</div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- 進度與學習曲線圖表區 -->
+  <div class="grid-cols-3" style="margin-bottom: 2rem;">
+    <!-- 左邊進度環 -->
+    <div class="glass-card" style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 320px;">
+      <div class="card-title" style="align-self: flex-start; margin-bottom: 1rem; width: 100%;">
+        <span class="material-icons-round" style="color: var(--secondary);">donut_large</span>
+        <span>整體進度分析</span>
+      </div>
+      <div style="width: 100%; height: 200px; display: flex; align-items: center; justify-content: center;">
+        <canvas id="canvas-progress-donut" style="width: 180px; height: 180px;"></canvas>
+      </div>
+    </div>
+    
+    <!-- 中間學習趨勢折線圖 -->
+    <div class="glass-card" style="grid-column: span 2; height: 320px;">
+      <div class="card-header" style="border: none; padding: 0; margin-bottom: 0.5rem;">
+        <div class="card-title">
+          <span class="material-icons-round" style="color: var(--primary);">trending_up</span>
+          <span>近七日學習時數 (分鐘)</span>
+        </div>
+      </div>
+      <div style="width: 100%; height: 240px; position: relative;">
+        <canvas id="canvas-study-line" style="width: 100%; height: 100%;"></canvas>
+      </div>
+    </div>
+  </div>
+  
+  <div class="grid-cols-3">
+    <!-- 各模組進度 -->
+    <div class="glass-card" style="grid-column: span 2;">
+      <div class="card-header">
+        <h3 class="card-title">
+          <span class="material-icons-round">analytics</span>
+          <span>模組進度明細</span>
+        </h3>
+      </div>
+      <div id="dash-module-list" style="display: flex; flex-direction: column; gap: 0.85rem;">
+        <!-- 這裡動態載入模組進度 -->
+        <div style="color: var(--text-muted); font-size: 0.9rem; text-align: center;">加載中...</div>
+      </div>
+    </div>
+    
+    <!-- 快速行動 & 推薦單元 -->
+    <div class="glass-card" style="display: flex; flex-direction: column; justify-content: space-between;">
+      <div>
+        <div class="card-header">
+          <h3 class="card-title">
+            <span class="material-icons-round">lightbulb</span>
+            <span>今日推薦學習單元</span>
+          </h3>
+        </div>
+        <div id="dash-recommendation-card" style="margin-bottom: 1.5rem;">
+          <!-- 動態載入今日推薦 -->
+          <div id="dash-rec-card-body" style="background: rgba(255,255,255,0.02); padding: 1rem; border-radius: 10px; border: 1px solid var(--border-color);">
+            <div style="font-weight: 600; font-size: 0.95rem; color: var(--secondary);" id="dash-rec-title">正在規劃中...</div>
+            <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">對應文獻: <span id="dash-rec-lit">--</span></div>
+            <p style="font-size: 0.8rem; color: var(--text-dark); margin-top: 0.5rem;" id="dash-rec-desc">載入您的學習進度以推薦下一個最適合研讀的單元。</p>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 快速連結按鈕 -->
+      <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+        <button class="btn btn-primary" onclick="window.location.hash='#practice'" style="width: 100%;">
+          <span class="material-icons-round">psychology</span>
+          <span>進行 AI 題庫練習</span>
+        </button>
+        <button class="btn btn-secondary" onclick="window.location.hash='#review'" style="width: 100%;">
+          <span class="material-icons-round">layers</span>
+          <span>複習卡片 (<span id="btn-due-count">0</span>)</span>
+        </button>
+        <button class="btn btn-secondary" onclick="window.location.hash='#oral'" style="width: 100%;">
+          <span class="material-icons-round">record_voice_over</span>
+          <span>模擬口試問答</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script>
+/**
+ * 載入儀表板頁面數據與圖表繪製
+ */
+async function loadDashboardPage() {
+  const dashProgressPercent = document.getElementById('dash-progress-percent');
+  const dashCompletedUnits = document.getElementById('dash-completed-units');
+  const dashTotalUnits = document.getElementById('dash-total-units');
+  const dashHours = document.getElementById('dash-hours');
+  const dashDailyGoal = document.getElementById('dash-daily-goal');
+  const dashStreak = document.getElementById('dash-streak');
+  const dashStreakSub = document.getElementById('dash-streak-sub');
+  const dashDueCards = document.getElementById('dash-due-cards');
+  const btnDueCount = document.getElementById('btn-due-count');
+  const dashCountdown = document.getElementById('dash-countdown');
+  const dashModuleList = document.getElementById('dash-module-list');
+  
+  // 1. 取得後端儀表板數據
+  const data = await API.getDashboardData();
+  
+  // 2. 填充基本指標
+  dashProgressPercent.innerText = data.overallProgressPercent;
+  dashCompletedUnits.innerText = data.completedUnits;
+  dashTotalUnits.innerText = data.totalUnits;
+  dashHours.innerText = data.totalHours.toFixed(1);
+  dashDailyGoal.innerText = data.dailyGoalMinutes;
+  dashStreak.innerText = data.streak;
+  dashDueCards.innerText = data.dueReviewCardsCount;
+  btnDueCount.innerText = data.dueReviewCardsCount;
+  dashCountdown.innerText = data.daysRemaining;
+  
+  if (data.streak > 0) {
+    dashStreakSub.innerText = `太棒了！已連續學習 ${data.streak} 天`;
+  } else {
+    dashStreakSub.innerText = '今天還沒開始學習喔！';
+  }
+  
+  // 3. 繪製圖表 (圓環進度 & 學習趨勢折線圖)
+  Charts.drawDonut('canvas-progress-donut', data.overallProgressPercent);
+  Charts.drawLine('canvas-study-line', data.weeklyDailyMinutes);
+  
+  // 4. 動態填充各模組進度列表
+  dashModuleList.innerHTML = '';
+  for (const mId in data.moduleProgress) {
+    const mod = data.moduleProgress[mId];
+    const modRow = document.createElement('div');
+    modRow.style.display = 'flex';
+    modRow.style.flexDirection = 'column';
+    modRow.style.gap = '0.25rem';
+    
+    modRow.innerHTML = `
+      <div style="display: flex; justify-content: space-between; font-size: 0.85rem;">
+        <span style="font-weight: 600;">[${mId}] ${mod.name}</span>
+        <span style="color: var(--text-muted); font-weight: 500;">${mod.completed} / ${mod.total} 單元 (${mod.percent}%)</span>
+      </div>
+      <div class="progress-bar-container" style="height: 6px;">
+        <div class="progress-bar-fill" style="width: ${mod.percent}%;"></div>
+      </div>
+    `;
+    dashModuleList.appendChild(modRow);
+  }
+  
+  // 5. 尋找並填充推薦單元
+  try {
+    const progressList = await API.getProgress();
+    // 找出第一個尚未完成的單元作為推薦
+    const recUnit = progressList.find(p => p.status === 'not_started' || p.status === 'in_progress');
+    const recCardBody = document.getElementById('dash-rec-card-body');
+    if (recUnit) {
+      document.getElementById('dash-rec-title').innerText = `[${recUnit.moduleId}] ${recUnit.unitName}`;
+      document.getElementById('dash-rec-lit').innerText = recUnit.literature;
+      document.getElementById('dash-rec-desc').innerHTML = `這個單元規劃在第 ${recUnit.plannedWeek} 週學習，對應章節為「${recUnit.chapters}」，建議預估學習 ${recUnit.estimatedMinutes} 分鐘。<b style="color: var(--secondary);">點擊此卡片可直接前往該單元之課綱進度。</b>`;
+      if (recCardBody) {
+        recCardBody.classList.add('rec-card-clickable');
+        recCardBody.onclick = () => {
+          window.pendingSyllabusScrollTarget = recUnit.unitId;
+          window.location.hash = '#syllabus';
+        };
+      }
+    } else {
+      document.getElementById('dash-rec-title').innerText = '🎉 恭喜！您已讀完所有單元';
+      document.getElementById('dash-rec-lit').innerText = '無';
+      document.getElementById('dash-rec-desc').innerText = '您已經完成了所有規定的學習進度！建議進入 Phase 4 與 Phase 5，多進行 AI 出題練習與口試模擬。';
+      if (recCardBody) {
+        recCardBody.classList.remove('rec-card-clickable');
+        recCardBody.onclick = null;
+      }
+    }
+  } catch(e) {}
+}
+</script>

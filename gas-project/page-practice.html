@@ -1,0 +1,452 @@
+<template id="template-practice">
+  <div class="page-header">
+    <div class="page-title">
+      <h2>AI 練習題庫</h2>
+      <p>由於無歷屆考題，系統採用 Gemini AI 讀取您的文獻課綱，量身生成精準的單選練習題，支持自我審查與手動擴充。</p>
+    </div>
+  </div>
+  
+  <div class="grid-cols-3" style="margin-bottom: 2rem;">
+    <!-- 左邊：出題參數與手動新增 -->
+    <div class="glass-card" style="grid-column: span 1; display: flex; flex-direction: column; gap: 1.5rem;">
+      <!-- AI 出題面版 -->
+      <div>
+        <div class="card-header">
+          <h3 class="card-title">
+            <span class="material-icons-round" style="color: var(--secondary);">bolt</span>
+            <span>AI 自動生成題目</span>
+          </h3>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label" for="practice-mod-select">選擇模組</label>
+          <select id="practice-mod-select"></select>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label" for="practice-topic-select">選擇主題</label>
+          <select id="practice-topic-select"></select>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label" for="practice-unit-select">選擇小單元</label>
+          <select id="practice-unit-select"></select>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label" for="practice-diff-select">難度等級</label>
+          <select id="practice-diff-select">
+            <option value="1">難度 1 — 核心觀念題 (基礎)</option>
+            <option value="2" selected>難度 2 — 應用計算題 (中等)</option>
+            <option value="3">難度 3 — 複雜推導與臨床決策 (高難)</option>
+          </select>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label" for="practice-count-select">生成數量</label>
+          <select id="practice-count-select">
+            <option value="3">生成 3 題</option>
+            <option value="5" selected>生成 5 題</option>
+            <option value="10">生成 10 題</option>
+          </select>
+        </div>
+        
+        <button id="btn-generate-qs" class="btn btn-accent" style="width: 100%;">
+          <span class="material-icons-round">bolt</span>
+          <span>使用 Gemini 出題</span>
+        </button>
+      </div>
+      
+      <!-- 手動出題 -->
+      <div style="border-top: 1px solid var(--border-color); padding-top: 1.5rem;">
+        <button class="btn btn-secondary" onclick="openAddQuestionModal()" style="width: 100%;">
+          <span class="material-icons-round">add</span>
+          <span>手動新增題目</span>
+        </button>
+      </div>
+    </div>
+    
+    <!-- 右邊：題庫題目清單 -->
+    <div class="glass-card" style="grid-column: span 2;">
+      <div class="card-header">
+        <h3 class="card-title">
+          <span class="material-icons-round">view_list</span>
+          <span>已生成題庫 (<span id="practice-qs-count">0</span> 題)</span>
+        </h3>
+        <div>
+          <!-- 過濾篩選 -->
+          <select id="filter-verified-select" style="padding: 0.4rem 0.8rem; font-size: 0.8rem; width: auto;">
+            <option value="all">顯示全部</option>
+            <option value="unverified" selected>僅顯示 AI 待審查</option>
+            <option value="verified">僅顯示已核可</option>
+          </select>
+        </div>
+      </div>
+      
+      <div id="questions-list-container" style="display: flex; flex-direction: column; gap: 1.5rem; max-height: 550px; overflow-y: auto; padding-right: 0.5rem;">
+        <!-- 題目列表動態載入 -->
+        <div style="text-align: center; color: var(--text-muted); padding: 3rem;">請在左側選取主題進行題目載入。</div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- 手動新增題目 Modal -->
+  <dialog id="add-q-modal" class="modal-dialog">
+    <div class="modal-content" style="max-width: 700px;">
+      <div class="modal-header">
+        <h3>手動新增題目</h3>
+        <span class="modal-close" onclick="closeAddQuestionModal()">&times;</span>
+      </div>
+      
+      <div class="grid-cols-3">
+        <div class="form-group">
+          <label class="form-label" for="add-q-mod">所屬模組</label>
+          <select id="add-q-mod"></select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="add-q-topic">所屬主題</label>
+          <select id="add-q-topic"></select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="add-q-unit">所屬小單元</label>
+          <select id="add-q-unit"></select>
+        </div>
+      </div>
+      
+      <div class="form-group">
+        <label class="form-label" for="add-q-text">題目敘述</label>
+        <textarea id="add-q-text" rows="3" class="form-control" placeholder="請輸入物理師考照題目內容..."></textarea>
+      </div>
+      
+      <div class="grid-cols-2">
+        <div class="form-group">
+          <label class="form-label" for="add-q-optA">選項 A</label>
+          <input type="text" id="add-q-optA" class="form-control">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="add-q-optB">選項 B</label>
+          <input type="text" id="add-q-optB" class="form-control">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="add-q-optC">選項 C</label>
+          <input type="text" id="add-q-optC" class="form-control">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="add-q-optD">選項 D</label>
+          <input type="text" id="add-q-optD" class="form-control">
+        </div>
+      </div>
+      
+      <div class="grid-cols-2">
+        <div class="form-group">
+          <label class="form-label" for="add-q-correct">正確答案</label>
+          <select id="add-q-correct">
+            <option value="A">A</option>
+            <option value="B">B</option>
+            <option value="C">C</option>
+            <option value="D">D</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="add-q-diff">難度</label>
+          <select id="add-q-diff">
+            <option value="1">1 (基礎)</option>
+            <option value="2">2 (中等)</option>
+            <option value="3">3 (挑戰)</option>
+          </select>
+        </div>
+      </div>
+      
+      <div class="form-group">
+        <label class="form-label" for="add-q-exp">詳細解析 (選填)</label>
+        <textarea id="add-q-exp" rows="3" class="form-control" placeholder="請輸入公式推導與解析說明..."></textarea>
+      </div>
+      
+      <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem;">
+        <button class="btn btn-secondary" onclick="closeAddQuestionModal()">取消</button>
+        <button id="btn-submit-manual-q" class="btn btn-primary">確認新增</button>
+      </div>
+    </div>
+  </dialog>
+</template>
+
+<script>
+let currentSyllabusForQs = [];
+let loadedQuestions = [];
+
+/**
+ * 初始化練習頁面
+ */
+async function loadPracticePage() {
+  currentSyllabusForQs = await API.getSyllabus();
+  if (window.location.hash.substring(1) !== 'practice') return;
+  
+  // 1. 初始化出題選單與新增選單
+  populateSyllabusSelectors();
+  
+  // 2. 監聽變更載入已有題目
+  document.getElementById('practice-mod-select').onchange = () => {
+    utilsUpdateTopicSelect('practice-mod-select', 'practice-topic-select', currentSyllabusForQs);
+    utilsUpdateUnitSelect('practice-mod-select', 'practice-topic-select', 'practice-unit-select', currentSyllabusForQs, { allOptionText: '全部小單元 (依主題出題)' });
+    loadDatabaseQuestions();
+  };
+  document.getElementById('practice-topic-select').onchange = () => {
+    utilsUpdateUnitSelect('practice-mod-select', 'practice-topic-select', 'practice-unit-select', currentSyllabusForQs, { allOptionText: '全部小單元 (依主題出題)' });
+    loadDatabaseQuestions();
+  };
+  document.getElementById('practice-unit-select').onchange = loadDatabaseQuestions;
+  document.getElementById('filter-verified-select').onchange = renderQuestionsList;
+  
+  // 3. 觸發初次載入
+  utilsUpdateTopicSelect('practice-mod-select', 'practice-topic-select', currentSyllabusForQs);
+  utilsUpdateUnitSelect('practice-mod-select', 'practice-topic-select', 'practice-unit-select', currentSyllabusForQs, { allOptionText: '全部小單元 (依主題出題)' });
+  loadDatabaseQuestions();
+  
+  // 4. AI 出題綁定
+  document.getElementById('btn-generate-qs').onclick = async () => {
+    const btn = document.getElementById('btn-generate-qs');
+    const moduleId = document.getElementById('practice-mod-select').value;
+    const topicId = document.getElementById('practice-topic-select').value;
+    const unitId = document.getElementById('practice-unit-select').value;
+    const difficulty = document.getElementById('practice-diff-select').value;
+    const count = document.getElementById('practice-count-select').value;
+    
+    btn.disabled = true;
+    try {
+      showToast('正在向 Gemini API 發出出題請求，這需要 10-15 秒，請稍候...', 'info');
+      // 將 unitId 作為第五個參數傳遞，精準鎖定單元
+      const newQs = await API.generateAIQuestions(moduleId, topicId, count, difficulty, unitId);
+      showToast(`成功生成 ${newQs.length} 道高質量練習題！`, 'success');
+      loadDatabaseQuestions(); // 重新讀取
+    } catch(err) {
+      showToast('出題失敗：' + err.message, 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  };
+}
+
+/**
+ * 載入並渲染資料庫題目
+ */
+async function loadDatabaseQuestions() {
+  const container = document.getElementById('questions-list-container');
+  container.innerHTML = `<div class="loader-container"><div class="spinner"></div><div class="loading-text">載入題庫中...</div></div>`;
+  
+  const moduleId = document.getElementById('practice-mod-select').value;
+  const topicId = document.getElementById('practice-topic-select').value;
+  
+  try {
+    const res = await API.getQuestions(moduleId, topicId);
+    if (window.location.hash.substring(1) !== 'practice') return;
+    loadedQuestions = Array.isArray(res) ? res : [];
+    renderQuestionsList();
+  } catch (err) {
+    container.innerHTML = `<div style="color: var(--danger); text-align: center;">載入失敗: ${err.message}</div>`;
+  }
+}
+
+/**
+ * 渲染題目清單
+ */
+function renderQuestionsList() {
+  const container = document.getElementById('questions-list-container');
+  const countSpan = document.getElementById('practice-qs-count');
+  const filter = document.getElementById('filter-verified-select').value;
+  
+  // 安全的布林值檢查 (相容 boolean 與 "TRUE"/"FALSE" 字串)
+  const checkVerified = (val) => {
+    return val === true || String(val).trim().toUpperCase() === 'TRUE';
+  };
+  
+  // 根據 filter 過濾
+  let filtered = [...loadedQuestions];
+  if (filter === 'unverified') {
+    filtered = loadedQuestions.filter(q => !checkVerified(q.verified));
+  } else if (filter === 'verified') {
+    filtered = loadedQuestions.filter(q => checkVerified(q.verified));
+  }
+  
+  // 根據選中的小單元進行篩選
+  const selectedUnitId = document.getElementById('practice-unit-select').value;
+  if (selectedUnitId) {
+    filtered = filtered.filter(q => q.unitId === selectedUnitId);
+  }
+  
+  countSpan.innerText = filtered.length;
+  container.innerHTML = '';
+  
+  if (filtered.length === 0) {
+    container.innerHTML = `<div style="text-align: center; color: var(--text-muted); padding: 3rem;">此篩選條件下沒有題目。</div>`;
+    return;
+  }
+  
+  filtered.forEach((q, idx) => {
+    const qDiv = document.createElement('div');
+    qDiv.className = 'glass-card';
+    qDiv.style.background = 'rgba(255,255,255,0.01)';
+    qDiv.style.border = '1px solid rgba(255,255,255,0.06)';
+    
+    const isQVerified = checkVerified(q.verified);
+    const verifiedBadge = isQVerified 
+      ? '<span class="badge badge-completed" style="font-size: 0.65rem;">已審核核可</span>'
+      : '<span class="badge badge-review" style="font-size: 0.65rem;">AI 待審查</span>';
+      
+    qDiv.innerHTML = `
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.75rem;">
+        <div>
+          <span style="font-weight: 700; color: var(--secondary); margin-right: 0.5rem;">Q${idx + 1}</span>
+          <span class="badge badge-todo" style="font-size: 0.65rem; margin-right: 0.5rem;">難度 ${q.difficulty}</span>
+          ${verifiedBadge}
+        </div>
+        <div style="display: flex; gap: 0.5rem;">
+          ${!isQVerified ? `
+            <button class="btn btn-secondary" onclick="verifyQ('${q.questionId}')" style="padding: 0.35rem 0.6rem; font-size: 0.75rem; border-color: var(--success); color: var(--success);">
+              核可
+            </button>
+          ` : ''}
+          <button class="btn btn-danger" onclick="deleteQ('${q.questionId}')" style="padding: 0.35rem 0.6rem; font-size: 0.75rem;">
+            刪除
+          </button>
+        </div>
+      </div>
+      
+      <div style="font-weight: 500; font-size: 0.95rem; margin-bottom: 0.75rem; white-space: pre-wrap;" class="markdown-view">${q.questionText}</div>
+      
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; font-size: 0.85rem; margin-bottom: 0.75rem; color: var(--text-muted);">
+        <div>A. ${q.optionA}</div>
+        <div>B. ${q.optionB}</div>
+        <div>C. ${q.optionC}</div>
+        <div>D. ${q.optionD}</div>
+      </div>
+      
+      <div style="background: rgba(138,43,226,0.06); padding: 0.75rem; border-radius: 8px; border-left: 3px solid var(--primary); font-size: 0.85rem; margin-top: 0.75rem;">
+        <div style="font-weight: 700; color: var(--text-main); margin-bottom: 0.25rem;">
+          正確答案: <span style="color: var(--success);">${q.correctAnswer}</span> 
+          <span style="font-weight: normal; font-size: 0.75rem; color: var(--text-dark); margin-left: 0.5rem;">(出處: ${q.sourceRef})</span>
+        </div>
+        <div style="color: var(--text-muted); font-size: 0.8rem; line-height: 1.5; white-space: pre-wrap;" class="markdown-view">${q.explanation}</div>
+      </div>
+    `;
+    container.appendChild(qDiv);
+  });
+  
+  // 重新渲染公式
+  renderMath();
+}
+
+/**
+ * 核可 AI 題目
+ */
+async function verifyQ(questionId) {
+  try {
+    await API.verifyQuestion(questionId);
+    showToast('題目已核可加入正式題庫！', 'success');
+    loadDatabaseQuestions();
+  } catch(e) {
+    showToast('核可失敗：' + e.message, 'error');
+  }
+}
+
+/**
+ * 刪除題目
+ */
+async function deleteQ(questionId) {
+  if (!confirm('您確定要刪除這道題目嗎？')) return;
+  try {
+    await API.deleteQuestion(questionId);
+    showToast('題目已刪除', 'success');
+    loadDatabaseQuestions();
+  } catch(e) {
+    showToast('刪除失敗：' + e.message, 'error');
+  }
+}
+
+/**
+ * 下拉選單填充
+ */
+function populateSyllabusSelectors() {
+  const modSelect = document.getElementById('practice-mod-select');
+  const addQMod = document.getElementById('add-q-mod');
+  
+  const modules = [...new Set(currentSyllabusForQs.map(u => u.moduleId))];
+  const moduleNames = {
+    M1: 'M1 基礎放射物理', M2: 'M2 臨床劑量學', M3: 'M3 治療計劃與射束',
+    M4: 'M4 特殊治療技術', M5: 'M5 品質保證', M6: 'M6 影像物理與QC', M7: 'M7 輻防安全',
+    M8: 'M8 基礎醫學', M9: 'M9 放射生物', M10: 'M10 電腦概論'
+  };
+  
+  modSelect.innerHTML = '';
+  addQMod.innerHTML = '';
+  
+  modules.forEach(mId => {
+    const text = moduleNames[mId] || mId;
+    modSelect.add(new Option(text, mId));
+    addQMod.add(new Option(text, mId));
+  });
+  
+  addQMod.onchange = () => {
+    utilsUpdateTopicSelect('add-q-mod', 'add-q-topic', currentSyllabusForQs);
+    utilsUpdateUnitSelect('add-q-mod', 'add-q-topic', 'add-q-unit', currentSyllabusForQs, { allOptionText: '無指定' });
+  };
+  
+  document.getElementById('add-q-topic').onchange = () => {
+    utilsUpdateUnitSelect('add-q-mod', 'add-q-topic', 'add-q-unit', currentSyllabusForQs, { allOptionText: '無指定' });
+  };
+  
+  utilsUpdateTopicSelect('add-q-mod', 'add-q-topic', currentSyllabusForQs);
+  utilsUpdateUnitSelect('add-q-mod', 'add-q-topic', 'add-q-unit', currentSyllabusForQs, { allOptionText: '無指定' });
+}
+
+// ==========================================
+// 手動新增題目 Modal
+// ==========================================
+function openAddQuestionModal() {
+  document.getElementById('add-q-text').value = '';
+  document.getElementById('add-q-optA').value = '';
+  document.getElementById('add-q-optB').value = '';
+  document.getElementById('add-q-optC').value = '';
+  document.getElementById('add-q-optD').value = '';
+  document.getElementById('add-q-exp').value = '';
+  document.getElementById('add-q-modal').showModal();
+  
+  document.getElementById('btn-submit-manual-q').onclick = async () => {
+    const btn = document.getElementById('btn-submit-manual-q');
+    const qObj = {
+      moduleId: document.getElementById('add-q-mod').value,
+      topicId: document.getElementById('add-q-topic').value,
+      unitId: document.getElementById('add-q-unit').value,
+      difficulty: document.getElementById('add-q-diff').value,
+      questionText: document.getElementById('add-q-text').value,
+      optionA: document.getElementById('add-q-optA').value,
+      optionB: document.getElementById('add-q-optB').value,
+      optionC: document.getElementById('add-q-optC').value,
+      optionD: document.getElementById('add-q-optD').value,
+      correctAnswer: document.getElementById('add-q-correct').value,
+      explanation: document.getElementById('add-q-exp').value
+    };
+    
+    if (!qObj.questionText || !qObj.optionA || !qObj.optionB) {
+      showToast('題目與選項為必填！', 'warning');
+      return;
+    }
+    
+    btn.disabled = true;
+    try {
+      showToast('正在新增題目...', 'info');
+      await API.addManualQuestion(qObj);
+      showToast('手動題目新增成功！', 'success');
+      closeAddQuestionModal();
+      loadDatabaseQuestions();
+    } catch(err) {
+      showToast('新增失敗：' + err.message, 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  };
+}
+
+function closeAddQuestionModal() {
+  document.getElementById('add-q-modal').close();
+}
+</script>

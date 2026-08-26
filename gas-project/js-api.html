@@ -1,0 +1,92 @@
+<script>
+/**
+ * 前端 API 通訊層 (js-api.html)
+ * 將 google.script.run 封裝為 Promise，使前端支援 async/await
+ */
+
+function callApi(functionName, args = []) {
+  return new Promise((resolve, reject) => {
+    if (typeof google === 'undefined' || !google.script || !google.script.run) {
+      // 本地測試模擬模式
+      console.warn(`[Local Simulate] API Call: ${functionName}`, args);
+      setTimeout(() => {
+        resolve(getMockData(functionName, args));
+      }, 500);
+      return;
+    }
+    
+    google.script.run
+      .withSuccessHandler(data => resolve(data))
+      .withFailureHandler(err => reject(err))
+      [functionName].apply(null, args);
+  });
+}
+
+// 宣告全域 api 物件供各頁面呼叫
+const API = {
+  initializeSheets: () => callApi('apiInitializeSheets'),
+  getConfig: (key) => callApi('apiGetConfig', [key]),
+  saveConfig: (key, value) => callApi('apiSaveConfig', [key, value]),
+  getSyllabus: () => callApi('apiGetSyllabus'),
+  getProgress: () => callApi('apiGetProgress'),
+  updateProgress: (unitId, status, minutes, notes) => callApi('apiUpdateProgress', [unitId, status, minutes, notes]),
+  getQuestions: (moduleId, topicId) => callApi('apiGetQuestions', [moduleId, topicId]),
+  addManualQuestion: (questionObj) => callApi('apiAddManualQuestion', [questionObj]),
+  verifyQuestion: (questionId) => callApi('apiVerifyQuestion', [questionId]),
+  deleteQuestion: (questionId) => callApi('apiDeleteQuestion', [questionId]),
+  generateAIQuestions: (moduleId, topicId, count, difficulty, unitId) => callApi('apiGenerateAIQuestions', [moduleId, topicId, count, difficulty, unitId]),
+  generateExam: (examType, moduleId) => callApi('apiGenerateExam', [examType, moduleId]),
+  submitExam: (examType, userAnswers, timeSpent, moduleId) => callApi('apiSubmitExam', [examType, userAnswers, timeSpent, moduleId]),
+  getExamResults: () => callApi('apiGetExamResults'),
+  getReviewCards: () => callApi('apiGetReviewCards'),
+  getDueReviewCards: () => callApi('apiGetDueReviewCards'),
+  addManualReviewCard: (moduleId, front, back) => callApi('apiAddManualReviewCard', [moduleId, front, back]),
+  deleteReviewCard: (cardId) => callApi('apiDeleteReviewCard', [cardId]),
+  submitReviewCardScore: (cardId, score) => callApi('apiSubmitReviewCardScore', [cardId, score]),
+  generateFlashcardsAI: (moduleId, textContent) => callApi('apiGenerateFlashcardsAI', [moduleId, textContent]),
+  getOralPractices: () => callApi('apiGetOralPractices'),
+  getNewOralQuestion: (moduleId, questionType) => callApi('apiGetNewOralQuestion', [moduleId, questionType]),
+  submitOralAnswer: (moduleId, questionType, question, referenceAnswer, userAnswer) => callApi('apiSubmitOralAnswer', [moduleId, questionType, question, referenceAnswer, userAnswer]),
+  getStudyLogs: () => callApi('apiGetStudyLogs'),
+  addManualStudyLog: (unitId, minutes, journalEntry) => callApi('apiAddManualStudyLog', [unitId, minutes, journalEntry]),
+  getDashboardData: () => callApi('apiGetDashboardData'),
+  generateUnitSummary: (unitId) => callApi('apiGenerateUnitSummary', [unitId]),
+  getUnitQuiz: (unitId, moduleId, topicId) => callApi('apiGetUnitQuiz', [unitId, moduleId, topicId])
+};
+
+/**
+ * 本地開發模擬資料 (當直接在瀏覽器開啟 index.html 時有用)
+ */
+function getMockData(functionName, args) {
+  switch (functionName) {
+    case 'apiGetDashboardData':
+      return {
+        daysRemaining: 420,
+        overallProgressPercent: 12,
+        completedUnits: 3,
+        totalUnits: 26,
+        inProgressUnits: 1,
+        totalHours: 12.5,
+        streak: 5,
+        weeklyDailyMinutes: [
+          { date: '07-05', minutes: 30 },
+          { date: '07-06', minutes: 45 },
+          { date: '07-07', minutes: 60 },
+          { date: '07-08', minutes: 0 },
+          { date: '07-09', minutes: 30 },
+          { date: '07-10', minutes: 40 },
+          { date: '07-11', minutes: 50 }
+        ],
+        averageExamScore: 78,
+        dueReviewCardsCount: 4,
+        dailyGoalMinutes: 45
+      };
+    case 'apiGetConfig':
+      if (args[0] === 'geminiApiKey') return 'MOCK_API_KEY_xxxx';
+      if (args[0] === 'geminiModel') return 'gemini-2.0-flash';
+      return '';
+    default:
+      return { success: true, mock: true };
+  }
+}
+</script>

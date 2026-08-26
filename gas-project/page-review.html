@@ -1,0 +1,299 @@
+<template id="template-review">
+  <div class="page-header">
+    <div class="page-title">
+      <h2>知識卡片複習</h2>
+      <p>採用 SuperMemo-2 (SM-2) 科學演算法，根據您的回憶記憶品質 (0-5分) 自動調節下一次複習間隔。</p>
+    </div>
+  </div>
+  
+  <div class="grid-cols-3">
+    <!-- 左邊：複習進行區 -->
+    <div class="glass-card" style="grid-column: span 2; display: flex; flex-direction: column; align-items: center; min-height: 480px;">
+      <!-- 篩選控制區 -->
+      <div style="width: 100%; display: flex; gap: 1rem; margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border-color); flex-wrap: wrap;">
+        <div style="flex: 1; min-width: 150px;">
+          <label style="font-size: 0.8rem; color: var(--text-muted); font-weight: 600; margin-bottom: 0.25rem; display: block;">篩選模組</label>
+          <select id="review-filter-mod" class="form-control" style="padding: 0.4rem 0.75rem; font-size: 0.85rem; background: var(--bg-primary); border-color: var(--border-color); color: var(--text-main);"></select>
+        </div>
+        <div style="flex: 1.5; min-width: 200px;">
+          <label style="font-size: 0.8rem; color: var(--text-muted); font-weight: 600; margin-bottom: 0.25rem; display: block;">篩選單元</label>
+          <select id="review-filter-unit" class="form-control" style="padding: 0.4rem 0.75rem; font-size: 0.85rem; background: var(--bg-primary); border-color: var(--border-color); color: var(--text-main);"></select>
+        </div>
+      </div>
+
+      <div id="review-active-box" style="width: 100%; display: none; flex-direction: column; align-items: center; flex-grow: 1; justify-content: center; padding: 1.5rem 0;">
+        <!-- 卡片進度 -->
+        <div style="font-size: 0.85rem; color: var(--text-muted); font-weight: 500; margin-bottom: 1.5rem;">
+          今日待複習進度：<span id="review-card-current">0</span> / <span id="review-card-total">0</span>
+        </div>
+        
+        <!-- 3D 翻轉卡片 -->
+        <div class="card-flipper" id="review-card-flipper">
+          <div class="card-inner">
+            <div class="card-front">
+              <span class="badge badge-todo" style="position: absolute; top: 1.5rem; left: 1.5rem;" id="review-card-mod-front">M1</span>
+              <div class="card-text markdown-view" id="review-card-front-text">問題載入中...</div>
+              <div style="position: absolute; bottom: 1.5rem; font-size: 0.75rem; color: var(--text-dark);">點擊卡片翻面看解答</div>
+            </div>
+            <div class="card-back">
+              <span class="badge badge-completed" style="position: absolute; top: 1.5rem; left: 1.5rem;" id="review-card-mod-back">M1</span>
+              <div class="card-text markdown-view" id="review-card-back-text">答案載入中...</div>
+              <div style="position: absolute; bottom: 1.5rem; font-size: 0.75rem; color: rgba(255,255,255,0.3);">再度點擊卡片可翻回正面</div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- 評分按鈕群 (預設隱藏，翻面後顯示) -->
+        <div id="review-rating-actions" style="display: none; flex-direction: column; align-items: center; gap: 1rem; width: 100%; animation: slideInUp 0.25s ease;">
+          <div style="font-size: 0.85rem; color: var(--text-muted); font-weight: 600;">請為您的「回憶品質」進行自我評分：</div>
+          
+          <div style="display: flex; gap: 0.5rem; justify-content: center; width: 100%; flex-wrap: wrap;">
+            <button class="btn btn-danger rating-btn" data-score="0">0 分 (忘光)</button>
+            <button class="btn btn-secondary rating-btn" style="color: var(--danger); border-color: rgba(255,23,68,0.2);" data-score="1">1 分 (很模糊)</button>
+            <button class="btn btn-secondary rating-btn" style="color: var(--warning); border-color: rgba(255,179,0,0.2);" data-score="2">2 分 (拼湊想起)</button>
+            <button class="btn btn-secondary rating-btn" style="color: var(--info); border-color: rgba(0,176,255,0.2);" data-score="3">3 分 (吃力答對)</button>
+            <button class="btn btn-secondary rating-btn" style="color: var(--success); border-color: rgba(0,230,118,0.2);" data-score="4">4 分 (稍微遲疑)</button>
+            <button class="btn btn-primary rating-btn" data-score="5">5 分 (反射答對)</button>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 複習完畢與空狀態 -->
+      <div id="review-empty-box" style="text-align: center; padding: 3rem; display: none; flex-grow: 1; flex-direction: column; align-items: center; justify-content: center;">
+        <span class="material-icons-round" style="font-size: 5rem; color: var(--success); animation: pulse 2s infinite;">task_alt</span>
+        <h3 style="margin-top: 1rem;">今日複習任務已完成！</h3>
+        <p style="color: var(--text-muted); font-size: 0.9rem; margin-top: 0.5rem;">沒有符合該篩選範圍的到期知識卡片。您可以在「課綱與進度」中，點擊單元右邊的 AI 閃電按鈕，生成更多卡片。</p>
+      </div>
+    </div>
+    
+    <!-- 右邊：卡片庫管理與手動新增 -->
+    <div class="glass-card" style="grid-column: span 1; display: flex; flex-direction: column; gap: 1.5rem;">
+      <div>
+        <div class="card-header">
+          <h3 class="card-title">
+            <span class="material-icons-round">add_box</span>
+            <span>新增自建卡片</span>
+          </h3>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label" for="card-add-mod">選擇模組</label>
+          <select id="card-add-mod" class="form-control"></select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="card-add-unit">選擇單元</label>
+          <select id="card-add-unit" class="form-control"></select>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label" for="card-add-front">正面 (問題/概念名詞)</label>
+          <textarea id="card-add-front" rows="3" class="form-control" placeholder="輸入正面內容..."></textarea>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label" for="card-add-back">背面 (答案/公式與解析)</label>
+          <textarea id="card-add-back" rows="4" class="form-control" placeholder="輸入背面內容..."></textarea>
+        </div>
+        
+        <button id="btn-save-card" class="btn btn-primary" style="width: 100%;">
+          <span class="material-icons-round">save</span>
+          <span>儲存卡片</span>
+        </button>
+      </div>
+      
+      <div style="border-top: 1px solid var(--border-color); padding-top: 1rem; text-align: center;">
+        <div style="font-size: 0.8rem; color: var(--text-dark);">
+          卡片資料庫總計: <span id="card-total-db-count">0</span> 張
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script>
+let allDueReviewCards = []; // 全部的待複習卡片
+let dueReviewCards = [];    // 符合篩選條件的卡片
+let currentCardIndex = 0;
+let isCardFlipped = false;
+
+/**
+ * 載入複習頁面
+ */
+async function loadReviewPage() {
+  const syllabus = await API.getSyllabus();
+  if (window.location.hash.substring(1) !== 'review') return;
+  const modules = [...new Set(syllabus.map(u => u.moduleId))];
+  
+  // 1. 初始化「手動新增卡片」選單
+  const modSelect = document.getElementById('card-add-mod');
+  const unitSelect = document.getElementById('card-add-unit');
+  modSelect.innerHTML = '';
+  modules.forEach(m => {
+    modSelect.add(new Option(m, m));
+  });
+  
+  modSelect.onchange = () => {
+    utilsUpdateUnitSelect('card-add-mod', null, 'card-add-unit', syllabus);
+  };
+  utilsUpdateUnitSelect('card-add-mod', null, 'card-add-unit', syllabus);
+  
+  // 2. 初始化「複習篩選」選單
+  const filterModSelect = document.getElementById('review-filter-mod');
+  const filterUnitSelect = document.getElementById('review-filter-unit');
+  filterModSelect.innerHTML = '';
+  filterModSelect.add(new Option('全部模組', 'ALL'));
+  modules.forEach(m => {
+    filterModSelect.add(new Option(m, m));
+  });
+  
+  filterModSelect.onchange = () => {
+    utilsUpdateUnitSelect('review-filter-mod', null, 'review-filter-unit', syllabus, { allOptionText: '全部單元', allOptionValue: 'ALL' });
+    applyReviewFilter();
+  };
+  
+  filterUnitSelect.onchange = () => {
+    applyReviewFilter();
+  };
+  
+  utilsUpdateUnitSelect('review-filter-mod', null, 'review-filter-unit', syllabus, { allOptionText: '全部單元', allOptionValue: 'ALL' });
+  
+  // 3. 獲取所有卡片與今日到期卡片
+  allDueReviewCards = await API.getDueReviewCards();
+  if (window.location.hash.substring(1) !== 'review') return;
+  const allCards = await API.getReviewCards();
+  if (window.location.hash.substring(1) !== 'review') return;
+  document.getElementById('card-total-db-count').innerText = allCards.length;
+  
+  // 執行初步過濾並顯示第一張卡片
+  applyReviewFilter();
+  
+  // 4. 綁定卡片翻轉事件
+  const flipper = document.getElementById('review-card-flipper');
+  flipper.onclick = () => {
+    isCardFlipped = !isCardFlipped;
+    if (isCardFlipped) {
+      flipper.classList.add('flipped');
+      document.getElementById('review-rating-actions').style.display = 'flex';
+    } else {
+      flipper.classList.remove('flipped');
+      document.getElementById('review-rating-actions').style.display = 'none';
+    }
+  };
+  
+  // 5. 綁定評分按鈕事件
+  const ratingBtns = document.querySelectorAll('.rating-btn');
+  ratingBtns.forEach(btn => {
+    btn.onclick = async (e) => {
+      e.stopPropagation(); // 避免點擊按鈕觸發卡片翻轉
+      const score = btn.getAttribute('data-score');
+      await submitCardRating(score);
+    };
+  });
+  
+  // 6. 綁定手動儲存卡片
+  document.getElementById('btn-save-card').onclick = async () => {
+    const saveBtn = document.getElementById('btn-save-card');
+    const moduleId = modSelect.value;
+    const unitId = unitSelect.value;
+    const front = document.getElementById('card-add-front').value;
+    const back = document.getElementById('card-add-back').value;
+    
+    if (!front || !back) {
+      showToast('正面與背面為必填！', 'warning');
+      return;
+    }
+    
+    saveBtn.disabled = true;
+    try {
+      showToast('正在儲存卡片...', 'info');
+      await API.addManualReviewCard(moduleId, unitId, front, back);
+      showToast('知識卡片已成功加入庫！', 'success');
+      document.getElementById('card-add-front').value = '';
+      document.getElementById('card-add-back').value = '';
+      loadReviewPage(); // 重新整理
+    } catch(err) {
+      showToast('儲存失敗：' + err.message, 'error');
+    } finally {
+      saveBtn.disabled = false;
+    }
+  };
+}
+
+
+
+/**
+ * 應用篩選條件，重新過濾今日待複習卡片
+ */
+function applyReviewFilter() {
+  const selectedMod = document.getElementById('review-filter-mod').value;
+  const selectedUnit = document.getElementById('review-filter-unit').value;
+  
+  dueReviewCards = allDueReviewCards.filter(c => {
+    const matchMod = (selectedMod === 'ALL' || c.moduleId === selectedMod);
+    const matchUnit = (selectedUnit === 'ALL' || c.unitId === selectedUnit);
+    return matchMod && matchUnit;
+  });
+  
+  currentCardIndex = 0;
+  showNextDueCard();
+}
+
+/**
+ * 顯示下一張待複習卡
+ */
+function showNextDueCard() {
+  const activeBox = document.getElementById('review-active-box');
+  const emptyBox = document.getElementById('review-empty-box');
+  const flipper = document.getElementById('review-card-flipper');
+  
+  if (dueReviewCards.length === 0 || currentCardIndex >= dueReviewCards.length) {
+    activeBox.style.display = 'none';
+    emptyBox.style.display = 'flex';
+    return;
+  }
+  
+  activeBox.style.display = 'flex';
+  emptyBox.style.display = 'none';
+  
+  // 重置翻面狀態
+  isCardFlipped = false;
+  flipper.classList.remove('flipped');
+  document.getElementById('review-rating-actions').style.display = 'none';
+  
+  const card = dueReviewCards[currentCardIndex];
+  
+  document.getElementById('review-card-current').innerText = currentCardIndex + 1;
+  document.getElementById('review-card-total').innerText = dueReviewCards.length;
+  
+  document.getElementById('review-card-mod-front').innerText = card.moduleId;
+  document.getElementById('review-card-mod-back').innerText = card.moduleId;
+  document.getElementById('review-card-front-text').innerHTML = card.front;
+  document.getElementById('review-card-back-text').innerHTML = card.back;
+  
+  // 每次載入卡片手動排版公式
+  renderMath();
+}
+
+/**
+ * 提交評分並載入下一張
+ */
+async function submitCardRating(score) {
+  const card = dueReviewCards[currentCardIndex];
+  showToast(`已評分 ${score} 分，排定下一次複習時程。`, 'success');
+  
+  // 從記憶體快取中移除已評分的卡片
+  allDueReviewCards = allDueReviewCards.filter(c => c.cardId !== card.cardId);
+  dueReviewCards = dueReviewCards.filter(c => c.cardId !== card.cardId);
+  
+  // 不需要 currentCardIndex++，因為後續卡片會自動遞補
+  showNextDueCard();
+  
+  // 同步在背景送回伺服器
+  try {
+    await API.submitReviewCardScore(card.cardId, score);
+  } catch(err) {
+    showToast('同步卡片評分失敗：' + err.message, 'error');
+  }
+}
+</script>

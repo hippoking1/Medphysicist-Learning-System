@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <title>醫學物理師考照自學系統</title>
+  <!-- Material Icons -->
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
+  <!-- MathJax Configuration -->
+  <script>
+    window.MathJax = {
+      tex: {
+        inlineMath: [['$', '$'], ['\\(', '\\)']],
+        displayMath: [['$$', '$$'], ['\\[', '\\]']]
+      }
+    };
+  </script>
+  <!-- MathJax for rendering math formulas (LaTeX) -->
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+  <?!= include('css'); ?>
+</head>
+<!-- 行動裝置頂部導覽列 -->
+<header class="mobile-header">
+  <button id="btn-sidebar-toggle" class="btn-sidebar-toggle">
+    <span class="material-icons-round">menu</span>
+  </button>
+  <div class="mobile-brand">
+    <div class="brand-icon-sm">MP</div>
+    <div class="mobile-brand-text">物理師自學系統</div>
+  </div>
+</header>
+
+<!-- 側邊欄遮罩 -->
+<div class="sidebar-overlay" id="sidebar-overlay"></div>
+
+<div class="app-container">
+  <!-- 側邊導覽列 -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-icon">MP</div>
+      <div class="brand-text">
+        <h1>醫學物理師</h1>
+        <p>自學備考系統</p>
+      </div>
+    </div>
+    
+    <ul class="nav-menu">
+      <li class="nav-item active" data-page="dashboard">
+        <a href="#dashboard">
+          <span class="material-icons-round nav-icon">dashboard</span>
+          <span>儀表板</span>
+        </a>
+      </li>
+      <li class="nav-item" data-page="syllabus">
+        <a href="#syllabus">
+          <span class="material-icons-round nav-icon">menu_book</span>
+          <span>課綱與進度</span>
+        </a>
+      </li>
+      <li class="nav-item" data-page="practice">
+        <a href="#practice">
+          <span class="material-icons-round nav-icon">psychology</span>
+          <span>AI 練習題庫</span>
+        </a>
+      </li>
+      <li class="nav-item" data-page="exam">
+        <a href="#exam">
+          <span class="material-icons-round nav-icon">assignment</span>
+          <span>模擬測驗</span>
+        </a>
+      </li>
+      <li class="nav-item" data-page="review">
+        <a href="#review">
+          <span class="material-icons-round nav-icon">layers</span>
+          <span>知識卡複習</span>
+        </a>
+      </li>
+      <li class="nav-item" data-page="oral">
+        <a href="#oral">
+          <span class="material-icons-round nav-icon">record_voice_over</span>
+          <span>口試模擬</span>
+        </a>
+      </li>
+      <li class="nav-item" data-page="journal">
+        <a href="#journal">
+          <span class="material-icons-round nav-icon">edit_note</span>
+          <span>學習日誌</span>
+        </a>
+      </li>
+      <li class="nav-item" data-page="settings">
+        <a href="#settings">
+          <span class="material-icons-round nav-icon">settings</span>
+          <span>系統設定</span>
+        </a>
+      </li>
+    </ul>
+    
+    <div class="sidebar-footer">
+      <p>ROC Medical Physicist Study System</p>
+      <p>v2.0 (Gemini AI Support)</p>
+    </div>
+  </aside>
+  
+  <!-- 主要內容區域 -->
+  <main class="main-content">
+    <div id="app-view">
+      <!-- SPA 視圖渲染區 -->
+      <div class="loader-container">
+        <div class="spinner"></div>
+        <div class="loading-text">載入系統中...</div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- 浮動學習計時器 -->
+<div id="floating-timer" class="floating-timer">
+  <span class="material-icons-round" style="color: var(--secondary); animation: spin 4s infinite linear;">hourglass_empty</span>
+  <div>
+    <div style="font-size: 0.7rem; color: var(--text-muted); font-weight: 600;">正在學習：<span id="timer-unit-name">未指定</span></div>
+    <div id="timer-time" class="timer-time">00:00:00</div>
+  </div>
+  <button id="btn-timer-pause" class="btn btn-secondary" style="padding: 0.4rem 0.6rem; border-radius: 8px;">
+    <span class="material-icons-round" style="font-size: 1rem;">pause</span>
+  </button>
+  <button id="btn-timer-stop" class="btn btn-primary" style="padding: 0.4rem 0.6rem; border-radius: 8px;">
+    <span class="material-icons-round" style="font-size: 1rem;">done</span>
+  </button>
+</div>
+
+<!-- Toast 通知 -->
+<div id="toast" class="toast">
+  <span id="toast-icon" class="material-icons-round">info</span>
+  <span id="toast-message">系統訊息</span>
+</div>
+
+<!-- 載入前端腳本 -->
+<?!= include('js-api'); ?>
+<?!= include('js-timer'); ?>
+<?!= include('js-charts'); ?>
+<?!= include('js-router'); ?>
+
+<!-- 載入各頁面 Template -->
+<?!= include('page-dashboard'); ?>
+<?!= include('page-syllabus'); ?>
+<?!= include('page-practice'); ?>
+<?!= include('page-exam'); ?>
+<?!= include('page-review'); ?>
+<?!= include('page-oral'); ?>
+<?!= include('page-journal'); ?>
+<?!= include('page-settings'); ?>
+
+<script>
+  // 全局 Toast 提示
+  function showToast(message, type = 'info') {
+    const toast = document.getElementById('toast');
+    const icon = document.getElementById('toast-icon');
+    const msgSpan = document.getElementById('toast-message');
+    
+    toast.className = `toast show ${type}`;
+    msgSpan.innerText = message;
+    
+    // 設定對應圖示
+    if (type === 'success') icon.innerText = 'check_circle';
+    else if (type === 'error') icon.innerText = 'error';
+    else if (type === 'warning') icon.innerText = 'warning';
+    else icon.innerText = 'info';
+    
+    setTimeout(() => {
+      toast.classList.remove('show');
+    }, 3000);
+  }
+
+  // MathJax 公式重新排版渲染
+  function renderMath() {
+    if (window.MathJax && MathJax.typesetPromise) {
+      MathJax.typesetPromise().catch((err) => console.log('MathJax error: ' + err.message));
+    }
+  }
+
+  // 綁定行動版側邊欄開關
+  document.addEventListener('DOMContentLoaded', () => {
+    const btnToggle = document.getElementById('btn-sidebar-toggle');
+    const overlay = document.getElementById('sidebar-overlay');
+    
+    if (btnToggle) {
+      btnToggle.onclick = toggleSidebar;
+    }
+    if (overlay) {
+      overlay.onclick = toggleSidebar;
+    }
+    
+    // 點擊側邊欄項目時，若在手機版，自動收合
+    const navItems = document.querySelectorAll('.nav-menu .nav-item');
+    navItems.forEach(item => {
+      item.addEventListener('click', () => {
+        if (window.innerWidth <= 768) {
+          closeSidebar();
+        }
+      });
+    });
+  });
+
+  function toggleSidebar() {
+    const sidebar = document.querySelector('.sidebar');
+    const overlay = document.getElementById('sidebar-overlay');
+    if (sidebar && overlay) {
+      sidebar.classList.toggle('active');
+      overlay.classList.toggle('active');
+    }
+  }
+
+  function closeSidebar() {
+    const sidebar = document.querySelector('.sidebar');
+    const overlay = document.getElementById('sidebar-overlay');
+    if (sidebar && overlay) {
+      sidebar.classList.remove('active');
+      overlay.classList.remove('active');
+    }
+  }
+</script>
+
+</body>
+</html>

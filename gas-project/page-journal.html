@@ -1,0 +1,144 @@
+<template id="template-journal">
+  <div class="page-header">
+    <div class="page-title">
+      <h2>學習日誌與回顧</h2>
+      <p>凡走過必留下痕跡。在此檢視您的歷史學習時數統計、讀書心得，並可手動補登外部學習時間與筆記。</p>
+    </div>
+  </div>
+  
+  <div class="grid-cols-3">
+    <!-- 左邊：歷史日誌列表 -->
+    <div class="glass-card" style="grid-column: span 2; display: flex; flex-direction: column;">
+      <div class="card-header">
+        <h3 class="card-title">
+          <span class="material-icons-round">history_edu</span>
+          <span>研讀日誌歷史</span>
+        </h3>
+      </div>
+      
+      <div id="journal-list-container" style="display: flex; flex-direction: column; gap: 1rem; max-height: 520px; overflow-y: auto; padding-right: 0.5rem;">
+        <!-- 動態載入日誌清單 -->
+        <div style="text-align: center; color: var(--text-dark); padding: 3rem;">載入日誌中...</div>
+      </div>
+    </div>
+    
+    <!-- 右邊：手動補登日誌 -->
+    <div class="glass-card" style="grid-column: span 1; display: flex; flex-direction: column; justify-content: space-between; height: fit-content;">
+      <div>
+        <div class="card-header">
+          <h3 class="card-title">
+            <span class="material-icons-round">edit_calendar</span>
+            <span>手動補登學習時數</span>
+          </h3>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label" for="journal-add-unit">對應學習單元</label>
+          <select id="journal-add-unit"></select>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label" for="journal-add-minutes">學習時間 (分鐘)</label>
+          <input type="number" id="journal-add-minutes" class="form-control" value="30" min="5" max="480">
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label" for="journal-add-notes">學習心得與重點筆記</label>
+          <textarea id="journal-add-notes" rows="8" class="form-control" placeholder="寫下今天的學習收穫、公式心得、需要加強的觀念..."></textarea>
+        </div>
+      </div>
+      
+      <button id="btn-save-journal" class="btn btn-primary" style="width: 100%; margin-top: 1rem;">
+        <span class="material-icons-round">save</span>
+        <span>儲存日誌</span>
+      </button>
+    </div>
+  </div>
+</template>
+
+<script>
+/**
+ * 載入學習日誌頁面
+ */
+async function loadJournalPage() {
+  // 1. 初始化單元選擇下拉選單
+  const syllabus = await API.getSyllabus();
+  const unitSelect = document.getElementById('journal-add-unit');
+  unitSelect.innerHTML = '';
+  unitSelect.add(new Option('一般通用研研 (General Study)', 'General'));
+  syllabus.forEach(u => {
+    unitSelect.add(new Option(`[${u.unitId}] ${u.unitName}`, u.unitId));
+  });
+  
+  // 2. 載入日誌清單
+  loadJournalList();
+  
+  // 3. 綁定手動儲存按鈕
+  document.getElementById('btn-save-journal').onclick = async () => {
+    const btn = document.getElementById('btn-save-journal');
+    const unitId = unitSelect.value;
+    const minutes = document.getElementById('journal-add-minutes').value;
+    const notes = document.getElementById('journal-add-notes').value;
+    
+    if (!notes || notes.trim() === '') {
+      showToast('心得筆記不可為空！', 'warning');
+      return;
+    }
+    
+    btn.disabled = true;
+    try {
+      showToast('正在儲存研讀日誌...', 'info');
+      await API.addManualStudyLog(unitId, minutes, notes);
+      showToast('研讀日誌已成功儲存！', 'success');
+      document.getElementById('journal-add-notes').value = '';
+      loadJournalList(); // 重新載入
+    } catch(err) {
+      showToast('儲存失敗：' + err.message, 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  };
+}
+
+/**
+ * 載入日誌資料並渲染
+ */
+async function loadJournalList() {
+  const container = document.getElementById('journal-list-container');
+  container.innerHTML = `<div class="loader-container"><div class="spinner"></div><div class="loading-text">載入日誌歷史中...</div></div>`;
+  
+  try {
+    const logs = await API.getStudyLogs();
+    container.innerHTML = '';
+    
+    if (logs.length === 0) {
+      container.innerHTML = '<div style="text-align: center; color: var(--text-dark); padding: 3rem;">目前尚無研讀日誌。請開始計時學習或在右側手動補登！</div>';
+      return;
+    }
+    
+    logs.forEach(log => {
+      const card = document.createElement('div');
+      card.className = 'glass-card';
+      card.style.background = 'rgba(255,255,255,0.01)';
+      card.style.border = '1px solid var(--border-color)';
+      card.style.padding = '1.25rem';
+      
+      const unitText = log.unitId === 'General' ? '通用研讀' : `單元 ${log.unitId}`;
+      
+      card.innerHTML = `
+        <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.5rem; border-bottom: 1px solid rgba(255,255,255,0.04); padding-bottom: 0.25rem;">
+          <span style="font-weight: 600; color: var(--secondary);">${log.date}</span>
+          <span>${unitText} | 研讀了 <span style="color: var(--secondary); font-weight: bold;">${log.minutes}</span> 分鐘</span>
+        </div>
+        <div style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.6; white-space: pre-wrap;" class="markdown-view">${log.journalEntry}</div>
+      `;
+      container.appendChild(card);
+    });
+    
+    // 渲染數學公式
+    renderMath();
+  } catch(err) {
+    container.innerHTML = `<div style="color: var(--danger); text-align: center; padding: 2rem;">載入失敗: ${err.message}</div>`;
+  }
+}
+</script>
