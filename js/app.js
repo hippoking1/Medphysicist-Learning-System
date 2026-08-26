@@ -450,6 +450,11 @@ async function loadPracticePage() {
     allUnitValue: ''
   });
 
+  const modSelect = document.getElementById('practice-mod-select');
+  const topicSelect = document.getElementById('practice-topic-select');
+  if (modSelect) modSelect.addEventListener('change', () => loadPracticeQuestionsList());
+  if (topicSelect) topicSelect.addEventListener('change', () => loadPracticeQuestionsList());
+
   const btnGen = document.getElementById('btn-generate-qs');
   if (btnGen) {
     btnGen.onclick = async () => {
@@ -1157,6 +1162,45 @@ function showOralSetup() {
   document.getElementById('oral-report-box').style.display = 'none';
 }
 
+function showOralPracticeReport(p) {
+  let evalRes = p.aiFeedback;
+  if (typeof evalRes === 'string') {
+    try { evalRes = JSON.parse(evalRes); } catch (e) { evalRes = { feedback: p.aiFeedback }; }
+  }
+  evalRes = evalRes || {};
+
+  document.getElementById('oral-setup-box').style.display = 'none';
+  document.getElementById('oral-active-box').style.display = 'none';
+  document.getElementById('oral-report-box').style.display = 'flex';
+
+  document.getElementById('oral-report-question').innerHTML = p.question;
+  document.getElementById('oral-report-user-answer').innerText = p.userAnswer;
+  document.getElementById('oral-res-score').innerText = p.aiScore || evalRes.score || 0;
+  document.getElementById('oral-score-comp').innerText = evalRes.completeness !== undefined ? evalRes.completeness : '--';
+  document.getElementById('oral-score-acc').innerText = evalRes.accuracy !== undefined ? evalRes.accuracy : '--';
+  document.getElementById('oral-score-log').innerText = evalRes.logic !== undefined ? evalRes.logic : '--';
+  document.getElementById('oral-score-dep').innerText = evalRes.depth !== undefined ? evalRes.depth : '--';
+  document.getElementById('oral-report-feedback').innerHTML = evalRes.feedback || '無詳細評語';
+  document.getElementById('oral-report-ref-answer').innerHTML = p.referenceAnswer || '無標準答案';
+
+  const missingUl = document.getElementById('oral-report-missing-list');
+  if (missingUl) {
+    missingUl.innerHTML = '';
+    const missing = evalRes.missingPoints || [];
+    if (Array.isArray(missing) && missing.length > 0) {
+      missing.forEach(pt => {
+        const li = document.createElement('li');
+        li.innerText = pt;
+        missingUl.appendChild(li);
+      });
+    } else {
+      missingUl.innerHTML = '<li style="color: var(--success);">回答完整，無重大缺漏觀念！</li>';
+    }
+  }
+
+  renderMath();
+}
+
 async function loadOralHistory() {
   const container = document.getElementById('oral-history-list');
   if (!container) return;
@@ -1177,6 +1221,8 @@ async function loadOralHistory() {
     card.style.padding = '0.85rem';
     card.style.minWidth = '0';
     card.style.overflow = 'hidden';
+    card.style.cursor = 'pointer';
+    card.style.transition = 'all 0.2s ease';
 
     card.innerHTML = `
       <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.25rem;">
@@ -1185,6 +1231,21 @@ async function loadOralHistory() {
       </div>
       <div style="font-size: 0.85rem; font-weight: 600; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${p.question}</div>
     `;
+
+    card.onmouseenter = () => {
+      card.style.background = 'rgba(0, 242, 254, 0.08)';
+      card.style.borderColor = 'var(--secondary)';
+    };
+    card.onmouseleave = () => {
+      card.style.background = 'rgba(255,255,255,0.015)';
+      card.style.borderColor = 'var(--border-color)';
+    };
+
+    // 點擊歷史紀錄卡片，立即展開該題之口試報告
+    card.onclick = () => {
+      showOralPracticeReport(p);
+    };
+
     container.appendChild(card);
   });
 }

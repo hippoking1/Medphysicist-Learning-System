@@ -414,6 +414,7 @@ dialog.modal-dialog {
   box-sizing: border-box;
   overflow: visible;
   outline: none;
+  color: var(--text-main);
 }
 
 dialog.modal-dialog::backdrop {
@@ -430,6 +431,16 @@ dialog.modal-dialog::backdrop {
   padding: 2rem;
   box-shadow: var(--glass-shadow);
   transform: translateY(0);
+  color: var(--text-main);
+}
+
+.modal-content * {
+  color: inherit;
+}
+
+select option {
+  background-color: #12131a;
+  color: #f5f6fa;
 }
 
 .modal-header {
@@ -639,6 +650,23 @@ dialog.modal-dialog::backdrop {
   gap: 1rem;
 }
 
+.quiz-option {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  padding: 1rem 1.25rem;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  color: var(--text-main);
+}
+
+.quiz-option * {
+  color: inherit;
+}
+
 .quiz-option:hover {
   background: rgba(255, 255, 255, 0.05);
   border-color: rgba(255, 255, 255, 0.15);
@@ -671,6 +699,7 @@ dialog.modal-dialog::backdrop {
   font-size: 0.9rem;
   border: 1px solid var(--border-color);
   flex-shrink: 0;
+  color: var(--text-main);
 }
 
 .quiz-option.selected .option-letter {
@@ -692,13 +721,19 @@ dialog.modal-dialog::backdrop {
 }
 
 /* 美觀的 Markdown 區塊 */
+.markdown-view {
+  color: var(--text-main);
+  line-height: 1.7;
+}
 .markdown-view h1, .markdown-view h2, .markdown-view h3 {
   margin-top: 1.25rem;
   margin-bottom: 0.5rem;
   font-weight: 600;
+  color: var(--text-main);
 }
 .markdown-view p {
   margin-bottom: 0.75rem;
+  color: var(--text-main);
 }
 .markdown-view code {
   font-family: monospace;
@@ -715,6 +750,7 @@ dialog.modal-dialog::backdrop {
   overflow-x: auto;
   margin-bottom: 1rem;
   border: 1px solid var(--border-color);
+  color: var(--text-main);
 }
 
 /* 行動版導覽列 */

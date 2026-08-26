@@ -102,6 +102,32 @@ function bindModuleTopicSelectors(modSelectId, topicSelectId, syllabus, options 
   const topicSelect = document.getElementById(topicSelectId);
   if (!modSelect || !topicSelect) return;
 
+  // 若模組選單尚未有任何選項，自動填入模組清單
+  if (modSelect.options.length === 0) {
+    if (options.allModOption) {
+      modSelect.add(new Option(options.allModOption, 'ALL'));
+    }
+    const modules = [];
+    const added = new Set();
+    syllabus.forEach(u => {
+      if (!added.has(u.moduleId)) {
+        modules.push({ id: u.moduleId, name: u.moduleName });
+        added.add(u.moduleId);
+      }
+    });
+    if (typeof MODULE_NAMES !== 'undefined') {
+      for (const mId in MODULE_NAMES) {
+        if (!added.has(mId)) {
+          modules.push({ id: mId, name: MODULE_NAMES[mId] });
+          added.add(mId);
+        }
+      }
+    }
+    modules.forEach(m => {
+      modSelect.add(new Option(`[${m.id}] ${m.name}`, m.id));
+    });
+  }
+
   const updateTopics = () => {
     const mId = modSelect.value;
     topicSelect.innerHTML = '';
@@ -137,6 +163,32 @@ function bindModuleUnitSelectors(modSelectId, topicSelectId, unitSelectId, sylla
   const topicSelect = topicSelectId ? document.getElementById(topicSelectId) : null;
   const unitSelect = document.getElementById(unitSelectId);
   if (!modSelect || !unitSelect) return;
+
+  // 若模組選單尚未有任何選項，自動填入模組清單
+  if (modSelect.options.length === 0) {
+    if (options.allModOption) {
+      modSelect.add(new Option(options.allModOption, 'ALL'));
+    }
+    const modules = [];
+    const added = new Set();
+    syllabus.forEach(u => {
+      if (!added.has(u.moduleId)) {
+        modules.push({ id: u.moduleId, name: u.moduleName });
+        added.add(u.moduleId);
+      }
+    });
+    if (typeof MODULE_NAMES !== 'undefined') {
+      for (const mId in MODULE_NAMES) {
+        if (!added.has(mId)) {
+          modules.push({ id: mId, name: MODULE_NAMES[mId] });
+          added.add(mId);
+        }
+      }
+    }
+    modules.forEach(m => {
+      modSelect.add(new Option(`[${m.id}] ${m.name}`, m.id));
+    });
+  }
 
   const updateUnits = () => {
     const mId = modSelect.value;
