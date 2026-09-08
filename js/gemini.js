@@ -349,5 +349,121 @@ ${textContent}
         return match + '\\';
       }
     });
+  },
+
+  /**
+   * 即時自 Google API 動態取得最新且最適合醫學物理考照的前 5 款 Gemini 模型
+   */
+  async fetchTopModels(apiKey) {
+    if (!apiKey) {
+      apiKey = await DB.getConfig('geminiApiKey');
+    }
+
+    const fallbackModels = this.getDefaultTopModels();
+
+    if (!apiKey || apiKey.trim() === '') {
+      return fallbackModels;
+    }
+
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey.trim()}`;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const res = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeoutId);
+
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const rawList = data.models || [];
+
+      // 篩選：必須支援 generateContent，且排除 embedding/aqa/vision 等非相關模型
+      const candidateModels = rawList.filter(m => {
+        const id = (m.name || '').replace('models/', '');
+        const methods = m.supportedGenerationMethods || [];
+        return methods.includes('generateContent') &&
+          !id.includes('embedding') &&
+          !id.includes('aqa') &&
+          !id.includes('imagen') &&
+          !id.includes('tts') &&
+          !id.includes('whisper') &&
+          !id.includes('bison') &&
+          id.startsWith('gemini');
+      });
+
+      if (candidateModels.length === 0) return fallbackModels;
+
+      // 評分演算法：越新 (版本號高)、架構越適合考照推理運算 (flash/pro) 排名越前
+      const scored = candidateModels.map(m => {
+        const id = m.name.replace('models/', '');
+        let score = 0;
+
+        // 版本號加權 (例如 2.5, 2.0, 1.5)
+        const verMatch = id.match(/gemini-(\d+)\.?(\d+)?/i);
+        if (verMatch) {
+          const major = parseInt(verMatch[1] || '0', 10);
+          const minor = parseInt(verMatch[2] || '0', 10);
+          score += major * 1000 + minor * 100;
+        }
+
+        // 模型定位加權
+        if (id.includes('flash')) score += 60; // flash 高速低延遲，最適合即時出題與自學
+        if (id.includes('pro')) score += 50;   // pro 深度推理，適合口試評分與推導
+        if (id.includes('thinking')) score += 20;
+
+        // 實驗與別名版本微調
+        if (id.includes('exp') || id.includes('preview')) score -= 15;
+        if (id.includes('lite')) score -= 30;
+
+        // 定義友善中文標籤
+        let desc = '';
+        if (id.includes('2.5-flash')) desc = '推薦: 最新極速且精準，性價比首選';
+        else if (id.includes('2.5-pro')) desc = '頂級旗艦: 複雜公式推導與口試首選';
+        else if (id.includes('2.0-flash') && !id.includes('lite')) desc = '高速穩定: 日常題庫練習首選';
+        else if (id.includes('2.0-pro')) desc = '高精確深度分析: 適合臨床評估';
+        else if (id.includes('1.5-pro')) desc = '長文本旗艦: 適合大篇幅文獻研讀';
+        else if (id.includes('1.5-flash')) desc = '高效輕量快速';
+        else desc = m.displayName || id;
+
+        return {
+          id,
+          name: `${id} (${desc})`,
+          score
+        };
+      });
+
+      // 依分數由高到低排序
+      scored.sort((a, b) => b.score - a.score);
+
+      // 去除同一基礎模型的重複別名（例如保留最新別名，過濾 -001, -latest 等重複項目）
+      const top5 = [];
+      const seenBases = new Set();
+
+      for (const item of scored) {
+        const base = item.id.replace(/-latest$/, '').replace(/-\d{3}$/, '');
+        if (!seenBases.has(base)) {
+          seenBases.add(base);
+          top5.push(item);
+        }
+        if (top5.length >= 5) break;
+      }
+
+      return top5.length >= 3 ? top5 : fallbackModels;
+    } catch (err) {
+      console.warn('即時獲取 Gemini 模型列表失敗，降級使用預設前 5 款模型:', err);
+      return fallbackModels;
+    }
+  },
+
+  /**
+   * 預設精選前 5 款模型
+   */
+  getDefaultTopModels() {
+    return [
+      { id: 'gemini-2.5-flash', name: 'gemini-2.5-flash (推薦: 最新極速且精準，性價比首選)' },
+      { id: 'gemini-2.5-pro', name: 'gemini-2.5-pro (頂級旗艦: 複雜公式推導與口試首選)' },
+      { id: 'gemini-2.0-flash', name: 'gemini-2.0-flash (高速穩定: 日常題庫練習首選)' },
+      { id: 'gemini-2.0-pro-exp-02-05', name: 'gemini-2.0-pro-exp-02-05 (高精確深度分析: 適合臨床評估)' },
+      { id: 'gemini-1.5-pro', name: 'gemini-1.5-pro (長文本旗艦: 適合大篇幅文獻研讀)' }
+    ];
   }
 };

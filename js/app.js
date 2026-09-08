@@ -1351,13 +1351,80 @@ async function loadSettingsPage() {
   const fbProjectIdInput = document.getElementById('input-fb-project-id');
   const fbStatusSpan = document.getElementById('fb-connection-status');
 
+  // 動態同步前 5 款最新與最合適的 Gemini 模型
+  async function updateModelOptions(currentKey, preferredModel, notify = false) {
+    const hintEl = document.getElementById('model-status-hint');
+    const btnSync = document.getElementById('btn-refresh-models');
+    if (hintEl) hintEl.innerHTML = '<span style="color: var(--secondary);">⏳ 正在向 Google API 查詢最新模型...</span>';
+    if (btnSync) btnSync.disabled = true;
+
+    try {
+      const topModels = await GeminiService.fetchTopModels(currentKey);
+      const targetModel = preferredModel || modelSelect.value || 'gemini-2.5-flash';
+
+      modelSelect.innerHTML = '';
+      let isTargetFound = false;
+
+      topModels.forEach(m => {
+        const opt = new Option(m.name, m.id);
+        if (m.id === targetModel) {
+          opt.selected = true;
+          isTargetFound = true;
+        }
+        modelSelect.add(opt);
+      });
+
+      // 若目前儲存的模型不在前 5 名中，保留使用者既有設定
+      if (!isTargetFound && targetModel) {
+        const customOpt = new Option(`${targetModel} (目前儲存中)`, targetModel);
+        customOpt.selected = true;
+        modelSelect.add(customOpt, 0);
+      }
+
+      if (hintEl) {
+        if (currentKey && currentKey.trim()) {
+          hintEl.innerHTML = '<span style="color: var(--success);">✓ 已根據 Google API 即時更新最適合醫學物理考照的前 5 款最新模型。</span>';
+        } else {
+          hintEl.innerText = '系統已載入推薦前 5 款模型；輸入 API Key 後點選「即時同步」可線上即時偵測。';
+        }
+      }
+
+      if (notify) {
+        showToast('已即時同步最新模型清單！', 'success');
+      }
+    } catch (err) {
+      if (hintEl) hintEl.innerText = '載入模型清單時發生狀況，已啟用預設推薦清單。';
+    } finally {
+      if (btnSync) btnSync.disabled = false;
+    }
+  }
+
   try {
     examDateInput.value = (await DB.getConfig('examDate')) || '2027-10-01';
     startDateInput.value = (await DB.getConfig('startDate')) || new Date().toISOString().split('T')[0];
     dailyGoalInput.value = (await DB.getConfig('dailyGoalMinutes')) || '45';
     notebookUrlInput.value = (await DB.getConfig('notebookLmUrl')) || '';
-    apiKeyInput.value = (await DB.getConfig('geminiApiKey')) || '';
-    modelSelect.value = (await DB.getConfig('geminiModel')) || 'gemini-2.5-flash';
+    
+    const savedApiKey = (await DB.getConfig('geminiApiKey')) || '';
+    const savedModel = (await DB.getConfig('geminiModel')) || 'gemini-2.5-flash';
+    apiKeyInput.value = savedApiKey;
+
+    await updateModelOptions(savedApiKey, savedModel, false);
+
+    // 綁定「即時同步」按鈕
+    const btnRefresh = document.getElementById('btn-refresh-models');
+    if (btnRefresh) {
+      btnRefresh.onclick = async () => {
+        await updateModelOptions(apiKeyInput.value.trim(), modelSelect.value, true);
+      };
+    }
+
+    // 當使用者貼上或變更 API Key 時自動嘗試同步
+    apiKeyInput.addEventListener('change', () => {
+      if (apiKeyInput.value.trim()) {
+        updateModelOptions(apiKeyInput.value.trim(), modelSelect.value, false);
+      }
+    });
 
     const activeFb = getActiveFirebaseConfig();
     if (fbApiKeyInput) fbApiKeyInput.value = activeFb.apiKey || '';

@@ -922,13 +922,23 @@
       </div>
       
       <div class="form-group">
-        <label class="form-label" for="select-model">AI 模型</label>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+          <label class="form-label" for="select-model" style="margin-bottom: 0;">AI 模型 (動態優選前 5 款)</label>
+          <button type="button" id="btn-refresh-models" class="btn btn-secondary" style="padding: 0.25rem 0.6rem; font-size: 0.75rem;">
+            <span class="material-icons-round" style="font-size: 0.9rem;">sync</span>
+            <span>即時同步</span>
+          </button>
+        </div>
         <select id="select-model">
-          <option value="gemini-2.5-flash" selected>gemini-2.5-flash (推薦: 最新極速且精準)</option>
-          <option value="gemini-2.0-flash">gemini-2.0-flash (高速且穩定)</option>
-          <option value="gemini-2.0-pro-exp-02-05">gemini-2.0-pro (高精確複雜推導)</option>
-          <option value="gemini-1.5-flash">gemini-1.5-flash</option>
+          <option value="gemini-2.5-flash" selected>gemini-2.5-flash (推薦: 最新極速且精準，性價比首選)</option>
+          <option value="gemini-2.5-pro">gemini-2.5-pro (頂級旗艦: 複雜公式推導與口試首選)</option>
+          <option value="gemini-2.0-flash">gemini-2.0-flash (高速穩定: 日常題庫練習首選)</option>
+          <option value="gemini-2.0-pro-exp-02-05">gemini-2.0-pro-exp-02-05 (高精確深度分析: 適合臨床評估)</option>
+          <option value="gemini-1.5-pro">gemini-1.5-pro (長文本旗艦: 適合大篇幅文獻研讀)</option>
         </select>
+        <p id="model-status-hint" style="font-size: 0.75rem; color: var(--text-dark); margin-top: 0.35rem;">
+          系統已依據即時效能與適用度為您自動載入前 5 款最佳模型。
+        </p>
       </div>
       
       <button id="btn-save-ai" class="btn btn-accent" style="width: 100%;">
