@@ -394,13 +394,15 @@ const Diagrams = {
       .replace(/\r\n/g, '\n')
       .trim();
 
-    // 1. 保護 LaTeX 公式 ($$...$$, \[...\], \(...\), $...$) 避免底線 _ 與星號 * 被 Markdown 破壞
+    // 1. 保護 LaTeX 公式 (支援 NotebookLM 雙反斜線跳脫 \\(...\\) / \\[...\\] 與標準 \(...\) / \[...\] / $$...$$ / $...$)
     const mathTokens = [];
     const saveMath = (m) => {
       const id = `@@MP_MATH_${mathTokens.length}@@`;
       mathTokens.push(m);
       return id;
     };
+    text = text.replace(/\\\\\[([\s\S]*?)\\\\\]/g, (_, inner) => saveMath(`\\[${inner}\\]`));
+    text = text.replace(/\\\\\(([\s\S]*?)\\\\\)/g, (_, inner) => saveMath(`\\(${inner}\\)`));
     text = text.replace(/\$\$[\s\S]*?\$\$/g, saveMath);
     text = text.replace(/\\\[[\s\S]*?\\\]/g, saveMath);
     text = text.replace(/\\\([\s\S]*?\\\)/g, saveMath);
@@ -448,6 +450,7 @@ const Diagrams = {
       const formatInline = (str) =>
         str
           .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+          .replace(/\*([^*\n]+?)\*/g, '<em>$1</em>')
           .replace(/`([^`]+)`/g, '<code>$1</code>');
 
       const lines = text.split('\n');
