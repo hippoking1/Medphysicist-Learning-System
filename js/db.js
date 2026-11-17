@@ -162,7 +162,9 @@ const DB = {
         startDate: prog.startDate || '',
         completeDate: prog.completeDate || '',
         totalMinutes: Number(prog.totalMinutes || 0),
-        notes: prog.notes || ''
+        notes: prog.notes || '',
+        studyGuide: prog.studyGuide || '',
+        studyGuideSource: prog.studyGuideSource || ''
       };
     });
   },
@@ -197,6 +199,8 @@ const DB = {
       completeDate,
       totalMinutes: newTotalMinutes,
       notes: notes !== undefined ? notes : (existing ? existing.notes : ''),
+      studyGuide: existing ? (existing.studyGuide || '') : '',
+      studyGuideSource: existing ? (existing.studyGuideSource || '') : '',
       updatedAt: new Date().toISOString()
     };
 
@@ -218,6 +222,37 @@ const DB = {
       await this.addManualStudyLog(unitId, addMinutes, `學習單元：${unitId}（累計 ${addMinutes} 分鐘）`);
     }
 
+    return { success: true, data: dataToSave };
+  },
+
+  async saveUnitStudyGuide(unitId, studyGuide, studyGuideSource = '') {
+    const allProgress = await this.getProgress();
+    const existing = allProgress.find((p) => p.unitId === unitId);
+    const dataToSave = {
+      unitId,
+      status: existing ? existing.status : 'not_started',
+      startDate: existing ? existing.startDate : '',
+      completeDate: existing ? existing.completeDate : '',
+      totalMinutes: existing ? Number(existing.totalMinutes || 0) : 0,
+      notes: existing ? (existing.notes || '') : '',
+      studyGuide: studyGuide || '',
+      studyGuideSource: studyGuideSource || '',
+      updatedAt: new Date().toISOString()
+    };
+
+    if (dbInstance && isFirebaseConnected) {
+      try {
+        await dbInstance.collection('progress').doc(unitId).set(dataToSave, { merge: true });
+      } catch (e) {
+        console.warn('[DB] 寫入 Firestore StudyGuide 失敗:', e);
+      }
+    }
+
+    const localProg = this._getLocal('progress') || [];
+    const idx = localProg.findIndex((p) => p.unitId === unitId);
+    if (idx >= 0) localProg[idx] = { ...localProg[idx], ...dataToSave };
+    else localProg.push(dataToSave);
+    this._setLocal('progress', localProg);
     return { success: true, data: dataToSave };
   },
 
@@ -932,6 +967,8 @@ const DB = {
           completeDate: p.completeDate || '',
           totalMinutes: Number(p.totalMinutes || 0),
           notes: p.notes || '',
+          studyGuide: p.studyGuide || '',
+          studyGuideSource: p.studyGuideSource || '',
           updatedAt: p.updatedAt || new Date().toISOString()
         }));
     }

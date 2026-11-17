@@ -9,7 +9,7 @@ const DEFAULT_SYLLABUS = [
     moduleId: 'M1', moduleName: '基礎放射物理',
     topicId: 'T1.1', topicName: '游離輻射物理與物質交互作用',
     unitId: 'U1.1.1', unitName: '輻射產生與物質交互作用原理',
-    literature: "Khan's Treatment Planning in Radiation 4th Edition.pdf, Radiation Physics for Medial Physicists.pdf",
+    literature: "Khans Treatment Planning in Radiation 4th Edition.pdf, Radiation Physics for Medial Physicists.pdf",
     chapters: '原子結構、X射線產生、光電效應、康普吞效應、成對產生 (Khan Ch.1-5, Radiation Physics Ch.1-4)',
     plannedWeek: 1, estimatedMinutes: 240, orderIndex: 1
   },
@@ -17,7 +17,7 @@ const DEFAULT_SYLLABUS = [
     moduleId: 'M1', moduleName: '基礎放射物理',
     topicId: 'T1.1', topicName: '游離輻射物理與物質交互作用',
     unitId: 'U1.1.2', unitName: '臨床射束能量與特性',
-    literature: "Khan's Treatment Planning in Radiation 4th Edition.pdf, Radiation Oncology Physics_a handbook for teachers and students.pdf",
+    literature: "Khans Treatment Planning in Radiation 4th Edition.pdf, Radiation Oncology Physics_a handbook for teachers and students.pdf",
     chapters: '射束品質、穿透力、半值層(HVL)量測 (Khan Ch.6-7, Radiation Oncology Physics Ch.1-2)',
     plannedWeek: 3, estimatedMinutes: 180, orderIndex: 2
   },
@@ -25,7 +25,7 @@ const DEFAULT_SYLLABUS = [
     moduleId: 'M1', moduleName: '基礎放射物理',
     topicId: 'T1.2', topicName: '基礎核物理與衰變',
     unitId: 'U1.2.1', unitName: '放射性衰變與核反應',
-    literature: "Khan's Treatment Planning in Radiation 4th Edition.pdf, Radiation Physics for Medial Physicists.pdf",
+    literature: "Khans Treatment Planning in Radiation 4th Edition.pdf, Radiation Physics for Medial Physicists.pdf",
     chapters: '衰變常數、半衰期、放射平衡、核反應截面積 (Khan Ch.2-3, Radiation Physics Ch.5)',
     plannedWeek: 5, estimatedMinutes: 180, orderIndex: 3
   },

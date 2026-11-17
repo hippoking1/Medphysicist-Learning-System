@@ -121,6 +121,7 @@ async function loadDashboardPage() {
 let currentSyllabusFilterMod = 'ALL';
 
 async function loadSyllabusPage() {
+  activeWorkspaceUnitId = null;
   const tabsContainer = document.getElementById('syllabus-module-tabs');
 
   if (tabsContainer) {
@@ -189,12 +190,14 @@ async function renderSyllabusList() {
 
     const st = statusMap[unit.status] || statusMap.not_started;
     const hasDiagram = typeof Diagrams !== 'undefined' && Diagrams.UNIT_DIAGRAMS[unit.unitId];
+    const hasGuide = !!(unit.studyGuide && unit.studyGuide.trim());
 
     card.innerHTML = `
       <div class="unit-card-row">
         <div class="unit-card-info">
           <div class="unit-meta-row">
             <span class="badge ${st.class}">${st.label}</span>
+            ${hasGuide ? '<span class="badge badge-progress">已存講義</span>' : ''}
             <span class="mono-num" style="font-size: 12px; color: var(--text-muted); font-weight: 500;">${unit.unitId}</span>
             <span style="font-size: 12px; color: var(--text-muted);">${unit.moduleName}</span>
             <span class="mono-num" style="font-size: 12px; color: var(--text-dark);">W${unit.plannedWeek} · 累計 ${unit.totalMinutes || 0} min</span>
@@ -210,29 +213,21 @@ async function renderSyllabusList() {
         </div>
 
         <div class="unit-actions">
+          <button class="btn btn-primary btn-sm btn-unit-study" title="開啟站內共讀工作台（講義 + 原文 PDF + 測驗）">
+            <span class="material-icons-round">menu_book</span>
+            <span>進入研讀</span>
+          </button>
           ${hasDiagram ? `
             <button class="btn btn-secondary btn-sm btn-unit-diagram" title="檢視標準醫學物理圖解">
               <span class="material-icons-round" style="color: var(--accent);">insights</span>
-              <span>標準圖解</span>
+              <span>圖解</span>
             </button>
           ` : ''}
-          <button class="btn btn-secondary btn-sm btn-unit-nlm" title="產生 NotebookLM 提示詞">
-            <span class="material-icons-round">auto_awesome</span>
-            <span>NotebookLM</span>
-          </button>
-          <button class="btn btn-secondary btn-sm btn-unit-quiz" title="單元隨堂測驗">
-            <span class="material-icons-round">quiz</span>
-            <span>測驗</span>
-          </button>
-          <button class="btn btn-secondary btn-sm btn-unit-aicard" title="AI 提煉複習卡">
-            <span class="material-icons-round">style</span>
-            <span>生卡</span>
-          </button>
           <button class="btn btn-secondary btn-sm btn-unit-progress" title="更新進度與筆記">
             <span class="material-icons-round">edit_note</span>
             <span>進度</span>
           </button>
-          <button class="btn btn-primary btn-sm btn-unit-timer" title="啟動學習計時器">
+          <button class="btn btn-secondary btn-sm btn-unit-timer" title="啟動學習計時器">
             <span class="material-icons-round">timer</span>
             <span>計時</span>
           </button>
@@ -240,17 +235,315 @@ async function renderSyllabusList() {
       </div>
     `;
 
+    card.querySelector('.btn-unit-study').onclick = () => openUnitStudyWorkspace(unit.unitId);
     if (hasDiagram) {
       card.querySelector('.btn-unit-diagram').onclick = () => openDiagramModal(unit.unitId, unit.unitName);
     }
-    card.querySelector('.btn-unit-nlm').onclick = () => openNotebookLMModal(unit.unitId);
-    card.querySelector('.btn-unit-quiz').onclick = () => openUnitQuizModal(unit.unitId, unit.moduleId, unit.topicId);
-    card.querySelector('.btn-unit-aicard').onclick = () => openAICardModal(unit.moduleId, unit.unitId);
     card.querySelector('.btn-unit-progress').onclick = () => openProgressModal(unit.unitId, unit.status, unit.notes);
     card.querySelector('.btn-unit-timer').onclick = () => StudyTimer.start(unit.unitId, unit.unitName);
 
     container.appendChild(card);
   });
+}
+
+// ==========================================
+// 2B. 一站式單元共讀工作台 (In-App Unit Study Workspace)
+// ==========================================
+let activeWorkspaceUnitId = null;
+let workspaceLastTutorReplyHtml = '';
+let workspaceSelectedText = '';
+
+async function openUnitStudyWorkspace(unitId) {
+  const listView = document.getElementById('syllabus-list-view');
+  const wsView = document.getElementById('syllabus-workspace-view');
+  if (!listView || !wsView) return;
+
+  const progressList = await DB.getProgress();
+  let unit = progressList.find((u) => u.unitId === unitId);
+  if (!unit) return;
+
+  activeWorkspaceUnitId = unitId;
+  listView.style.display = 'none';
+  wsView.style.display = 'block';
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+
+  // 1. 頂部工具列資訊與操作
+  document.getElementById('ws-unit-badge').innerText = unit.unitId;
+  document.getElementById('ws-unit-title').innerText = unit.unitName;
+  document.getElementById('ws-unit-lit').innerText = unit.literature;
+  document.getElementById('ws-unit-chapters').innerText = unit.chapters;
+
+  const statusSelect = document.getElementById('ws-status-select');
+  statusSelect.value = unit.status || 'not_started';
+  statusSelect.onchange = async () => {
+    await DB.updateProgress(unit.unitId, statusSelect.value, 0, document.getElementById('ws-notes-textarea').value);
+    showToast('學習狀態已更新', 'success');
+  };
+
+  document.getElementById('btn-ws-back').onclick = () => closeUnitStudyWorkspace();
+  document.getElementById('btn-ws-timer').onclick = () => StudyTimer.start(unit.unitId, unit.unitName);
+  document.getElementById('btn-ws-nlm').onclick = () => openNotebookLMModal(unit.unitId);
+
+  const wsGrid = document.getElementById('ws-grid');
+  const btnLayout = document.getElementById('btn-ws-layout');
+  const layoutLabel = document.getElementById('ws-layout-label');
+  btnLayout.onclick = () => {
+    const isFocus = wsGrid.classList.toggle('focus-mode');
+    layoutLabel.innerText = isFocus ? '專注單欄' : '雙欄對照';
+  };
+
+  const btnDiagrams = document.getElementById('btn-ws-diagrams');
+  const hasDiagram = typeof Diagrams !== 'undefined' && Diagrams.UNIT_DIAGRAMS[unit.unitId];
+  btnDiagrams.style.display = hasDiagram ? 'inline-flex' : 'none';
+  if (hasDiagram) {
+    btnDiagrams.onclick = () => openDiagramModal(unit.unitId, unit.unitName);
+  }
+
+  // 2. 左欄講義渲染與編輯
+  const guideContent = document.getElementById('ws-guide-content');
+  const guideMeta = document.getElementById('ws-guide-meta');
+  const editorBox = document.getElementById('ws-guide-editor-box');
+  const editorText = document.getElementById('ws-guide-editor-text');
+
+  const renderGuideUI = (u) => {
+    editorBox.style.display = 'none';
+    if (u.studyGuide && u.studyGuide.trim()) {
+      guideMeta.innerText = u.studyGuideSource ? `來源：${u.studyGuideSource}` : '已儲存講義';
+      guideContent.innerHTML = u.studyGuide;
+      renderMath(guideContent);
+    } else {
+      guideMeta.innerText = '尚未建立講義';
+      guideContent.innerHTML = `
+        <div class="sub-card" style="text-align: center; padding: 32px 16px;">
+          <div style="font-weight: 600; font-size: 15px; margin-bottom: 6px;">尚未建立本單元考點講義</div>
+          <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
+            點擊右上角「AI 精讀生成講義」，系統將自動讀取右側對應文獻 PDF（≤12MB）與課綱範疇整理重點，並永久儲存供日後秒開複習。
+          </p>
+        </div>
+      `;
+    }
+  };
+  renderGuideUI(unit);
+
+  const btnGenGuide = document.getElementById('btn-ws-gen-guide');
+  btnGenGuide.onclick = async () => {
+    btnGenGuide.disabled = true;
+    const orig = btnGenGuide.innerHTML;
+    btnGenGuide.innerHTML = '<span class="material-icons-round">hourglass_top</span><span>精讀生成中...</span>';
+    try {
+      showToast('正在載入文獻並由 Gemini 生成結構化講義（約需 20–60 秒）', 'info');
+      const res = await GeminiService.generateUnitStudyGuideAI(unit, true);
+      const sourceText = res.usedPdfFilename
+        ? `Gemini PDF 原文精讀 (${res.usedPdfFilename})`
+        : 'Gemini 課綱範疇整理';
+      await DB.saveUnitStudyGuide(unit.unitId, res.html, sourceText);
+      unit.studyGuide = res.html;
+      unit.studyGuideSource = sourceText;
+      renderGuideUI(unit);
+      showToast('講義生成並儲存完成', 'success');
+    } catch (e) {
+      showToast('生成失敗：' + e.message, 'error');
+    } finally {
+      btnGenGuide.disabled = false;
+      btnGenGuide.innerHTML = orig;
+    }
+  };
+
+  document.getElementById('btn-ws-edit-guide').onclick = () => {
+    editorText.value = unit.studyGuide || '';
+    editorBox.style.display = editorBox.style.display === 'none' ? 'block' : 'none';
+  };
+  document.getElementById('btn-ws-cancel-edit').onclick = () => {
+    editorBox.style.display = 'none';
+  };
+  document.getElementById('btn-ws-save-edit').onclick = async () => {
+    const val = editorText.value.trim();
+    await DB.saveUnitStudyGuide(unit.unitId, val, '手動編輯 / 匯入');
+    unit.studyGuide = val;
+    unit.studyGuideSource = '手動編輯 / 匯入';
+    renderGuideUI(unit);
+    showToast('講義內容已儲存', 'success');
+  };
+
+  // 3. 反白文字快捷轉閃卡 / 加入筆記
+  const selBar = document.getElementById('ws-selection-bar');
+  const selPreview = document.getElementById('ws-selection-preview');
+  const checkSelection = () => {
+    const sel = window.getSelection();
+    const txt = sel ? sel.toString().trim() : '';
+    if (txt && txt.length >= 4 && guideContent.contains(sel.anchorNode)) {
+      workspaceSelectedText = txt;
+      selPreview.innerText = txt;
+      selBar.style.display = 'flex';
+    } else {
+      selBar.style.display = 'none';
+    }
+  };
+  guideContent.onmouseup = checkSelection;
+  guideContent.ontouchend = checkSelection;
+
+  const switchWsTab = (tabKey) => {
+    document.querySelectorAll('.workspace-tab-btn').forEach((b) => {
+      b.classList.toggle('active', b.getAttribute('data-ws-tab') === tabKey);
+    });
+    document.getElementById('ws-tab-pdf').style.display = tabKey === 'pdf' ? 'block' : 'none';
+    document.getElementById('ws-tab-notes').style.display = tabKey === 'notes' ? 'block' : 'none';
+    document.getElementById('ws-tab-quiz').style.display = tabKey === 'quiz' ? 'block' : 'none';
+  };
+
+  document.getElementById('btn-ws-sel-card').onclick = () => {
+    if (!workspaceSelectedText) return;
+    switchWsTab('notes');
+    document.getElementById('ws-card-back').value = workspaceSelectedText;
+    const frontInput = document.getElementById('ws-card-front');
+    if (!frontInput.value.trim()) {
+      frontInput.value = `[${unit.unitId}] `;
+    }
+    frontInput.focus();
+    selBar.style.display = 'none';
+    showToast('已帶入右側閃卡背面，請補上提問後儲存', 'info');
+  };
+
+  document.getElementById('btn-ws-sel-note').onclick = async () => {
+    if (!workspaceSelectedText) return;
+    const notesEl = document.getElementById('ws-notes-textarea');
+    notesEl.value = notesEl.value.trim()
+      ? `${notesEl.value.trim()}\n- ${workspaceSelectedText}`
+      : `- ${workspaceSelectedText}`;
+    await DB.updateProgress(unit.unitId, statusSelect.value, 0, notesEl.value);
+    unit.notes = notesEl.value;
+    selBar.style.display = 'none';
+    showToast('已加入本單元研讀筆記並自動儲存', 'success');
+  };
+
+  // 4. 單元 AI 助教追問
+  const tutorInput = document.getElementById('ws-tutor-input');
+  const btnAskTutor = document.getElementById('btn-ws-ask-tutor');
+  const tutorReplyBox = document.getElementById('ws-tutor-reply-box');
+  const tutorReplyContent = document.getElementById('ws-tutor-reply-content');
+
+  tutorReplyBox.style.display = 'none';
+  btnAskTutor.onclick = async () => {
+    const q = tutorInput.value.trim();
+    if (!q) {
+      showToast('請輸入追問問題', 'warning');
+      return;
+    }
+    btnAskTutor.disabled = true;
+    try {
+      showToast('AI 助教思考中', 'info');
+      const answerHtml = await GeminiService.askUnitTutorAI(unit, unit.studyGuide, q);
+      workspaceLastTutorReplyHtml = `<h4>追問：${q}</h4>${answerHtml}`;
+      tutorReplyContent.innerHTML = answerHtml;
+      tutorReplyBox.style.display = 'block';
+      renderMath(tutorReplyContent);
+    } catch (e) {
+      showToast('追問失敗：' + e.message, 'error');
+    } finally {
+      btnAskTutor.disabled = false;
+    }
+  };
+
+  document.getElementById('btn-ws-append-tutor').onclick = async () => {
+    if (!workspaceLastTutorReplyHtml) return;
+    const updated = `${unit.studyGuide || ''}\n<hr style="border-color: var(--border-color); margin: 16px 0;">\n${workspaceLastTutorReplyHtml}`;
+    await DB.saveUnitStudyGuide(unit.unitId, updated, unit.studyGuideSource || 'AI 講義 + 助教補充');
+    unit.studyGuide = updated;
+    renderGuideUI(unit);
+    showToast('已併入單元講義並存檔', 'success');
+  };
+
+  document.getElementById('btn-ws-tutor-card').onclick = async () => {
+    const q = tutorInput.value.trim() || `[${unit.unitId}] 追問筆記`;
+    if (!tutorReplyContent.innerText.trim()) return;
+    await DB.addManualReviewCard(unit.moduleId, unit.unitId, q, tutorReplyContent.innerHTML);
+    showToast('已將助教解答轉入 SM-2 知識卡', 'success');
+  };
+
+  // 5. 右欄 Tab 1: 原文 PDF 檢視器
+  const pdfFiles = GeminiService.getUnitPdfFiles(unit.literature);
+  const pdfSelect = document.getElementById('ws-pdf-select');
+  const pdfFrame = document.getElementById('ws-pdf-frame');
+  const pdfNewTab = document.getElementById('ws-pdf-newtab');
+  const pdfEmpty = document.getElementById('ws-pdf-empty');
+
+  pdfSelect.innerHTML = '';
+  if (pdfFiles.length > 0) {
+    pdfSelect.style.display = 'block';
+    pdfNewTab.style.display = 'inline-flex';
+    pdfFrame.style.display = 'block';
+    pdfEmpty.style.display = 'none';
+
+    pdfFiles.forEach((f) => pdfSelect.add(new Option(f.name, f.url)));
+    const loadPdfUrl = (url) => {
+      pdfFrame.src = url;
+      pdfNewTab.href = url;
+    };
+    pdfSelect.onchange = () => loadPdfUrl(pdfSelect.value);
+    loadPdfUrl(pdfFiles[0].url);
+  } else {
+    pdfSelect.style.display = 'none';
+    pdfNewTab.style.display = 'none';
+    pdfFrame.style.display = 'none';
+    pdfFrame.src = 'about:blank';
+    pdfEmpty.style.display = 'block';
+  }
+
+  // 6. 右欄 Tab 2: 筆記與快速製卡
+  const notesTextarea = document.getElementById('ws-notes-textarea');
+  notesTextarea.value = unit.notes || '';
+  document.getElementById('btn-ws-save-notes').onclick = async () => {
+    await DB.updateProgress(unit.unitId, statusSelect.value, 0, notesTextarea.value);
+    unit.notes = notesTextarea.value;
+    showToast('單元筆記已儲存', 'success');
+  };
+
+  document.getElementById('btn-ws-save-card').onclick = async () => {
+    const f = document.getElementById('ws-card-front').value.trim();
+    const b = document.getElementById('ws-card-back').value.trim();
+    if (!f || !b) {
+      showToast('請填寫卡片正面與背面', 'warning');
+      return;
+    }
+    await DB.addManualReviewCard(unit.moduleId, unit.unitId, f, b);
+    document.getElementById('ws-card-front').value = '';
+    document.getElementById('ws-card-back').value = '';
+    showToast('已加入 SM-2 知識卡佇列', 'success');
+  };
+
+  // 7. 右欄 Tab 3: 同屏隨堂測驗
+  const wsQuizBody = document.getElementById('ws-quiz-body');
+  const wsQuizSubmit = document.getElementById('btn-ws-submit-quiz');
+  let quizLoaded = false;
+
+  const loadWsQuiz = async () => {
+    quizLoaded = true;
+    await loadQuizIntoContainer(unit.unitId, unit.moduleId, unit.topicId, wsQuizBody, wsQuizSubmit);
+  };
+  document.getElementById('btn-ws-load-quiz').onclick = loadWsQuiz;
+
+  document.querySelectorAll('.workspace-tab-btn').forEach((btn) => {
+    btn.onclick = () => {
+      const tab = btn.getAttribute('data-ws-tab');
+      switchWsTab(tab);
+      if (tab === 'quiz' && !quizLoaded) {
+        loadWsQuiz();
+      }
+    };
+  });
+
+  switchWsTab(pdfFiles.length > 0 ? 'pdf' : 'notes');
+}
+
+function closeUnitStudyWorkspace() {
+  activeWorkspaceUnitId = null;
+  const listView = document.getElementById('syllabus-list-view');
+  const wsView = document.getElementById('syllabus-workspace-view');
+  const pdfFrame = document.getElementById('ws-pdf-frame');
+  if (pdfFrame) pdfFrame.src = 'about:blank';
+  if (wsView) wsView.style.display = 'none';
+  if (listView) listView.style.display = 'block';
+  renderSyllabusList();
 }
 
 // 標準物理圖解彈窗
@@ -306,8 +599,18 @@ function openProgressModal(unitId, status, notes, prefillMinutes = 0, onSavedCal
       showToast('單元進度已儲存', 'success');
       closeProgressModal();
       if (typeof onSavedCallback === 'function') onSavedCallback();
-      if (currentRouteHash === 'syllabus') renderSyllabusList();
-      else if (currentRouteHash === 'dashboard') loadDashboardPage();
+      if (currentRouteHash === 'syllabus') {
+        if (activeWorkspaceUnitId === unitId) {
+          const wsStatus = document.getElementById('ws-status-select');
+          const wsNotes = document.getElementById('ws-notes-textarea');
+          if (wsStatus) wsStatus.value = s;
+          if (wsNotes) wsNotes.value = n;
+        } else {
+          renderSyllabusList();
+        }
+      } else if (currentRouteHash === 'dashboard') {
+        loadDashboardPage();
+      }
     } catch (e) {
       showToast('更新失敗：' + e.message, 'error');
     } finally {
@@ -410,15 +713,10 @@ function copyNotebookLMPrompt() {
   }
 }
 
-// 彈窗操作：隨堂測驗 Modal (附一鍵轉閃卡)
-async function openUnitQuizModal(unitId, moduleId, topicId) {
-  const dialog = document.getElementById('unit-quiz-modal');
-  const body = document.getElementById('quiz-modal-body');
-  const title = document.getElementById('quiz-modal-title');
-  if (title) title.innerText = `隨堂測驗 — ${unitId}`;
-
+// 共用隨堂測驗渲染與評分器 (Modal 與共讀工作台共用)
+async function loadQuizIntoContainer(unitId, moduleId, topicId, body, btnSubmit) {
   body.innerHTML = '<div class="loader-container"><div class="spinner"></div><div class="loading-text">載入或生成題目中</div></div>';
-  if (dialog && dialog.showModal) dialog.showModal();
+  if (btnSubmit) btnSubmit.style.display = 'none';
 
   try {
     const questions = await DB.getUnitQuiz(unitId, moduleId, topicId);
@@ -466,7 +764,6 @@ async function openUnitQuizModal(unitId, moduleId, topicId) {
 
     renderMath(body);
 
-    const btnSubmit = document.getElementById('btn-submit-unit-quiz');
     if (btnSubmit) {
       btnSubmit.style.display = 'inline-flex';
       btnSubmit.onclick = () => {
@@ -497,6 +794,17 @@ async function openUnitQuizModal(unitId, moduleId, topicId) {
   } catch (e) {
     body.innerHTML = `<div style="color: var(--danger); text-align: center; padding: 24px;">載入失敗: ${e.message}</div>`;
   }
+}
+
+// 彈窗操作：隨堂測驗 Modal
+async function openUnitQuizModal(unitId, moduleId, topicId) {
+  const dialog = document.getElementById('unit-quiz-modal');
+  const body = document.getElementById('quiz-modal-body');
+  const title = document.getElementById('quiz-modal-title');
+  const btnSubmit = document.getElementById('btn-submit-unit-quiz');
+  if (title) title.innerText = `隨堂測驗 — ${unitId}`;
+  if (dialog && dialog.showModal) dialog.showModal();
+  await loadQuizIntoContainer(unitId, moduleId, topicId, body, btnSubmit);
 }
 
 function closeUnitQuizModal() {

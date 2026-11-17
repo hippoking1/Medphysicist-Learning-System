@@ -264,35 +264,233 @@
   </div>
 </template>
 
-<!-- 2. 課綱與進度 Template -->
+<!-- 2. 課綱與進度 Template (含一站式單元共讀工作台) -->
 <template id="template-syllabus">
-  <div class="page-header">
-    <div class="page-title">
-      <h2>學習課綱與進度規劃</h2>
-      <p>10 大考科、37 個學習單元，整合標準物理圖解、NotebookLM 提示詞、隨堂測驗與計時器</p>
+  <!-- A. 課綱總覽清單視圖 -->
+  <div id="syllabus-list-view">
+    <div class="page-header">
+      <div class="page-title">
+        <h2>學習課綱與進度規劃</h2>
+        <p>10 大考科、37 個學習單元，點擊「進入研讀」即可於同畫面展開講義、原文 PDF 與隨堂測驗</p>
+      </div>
+    </div>
+
+    <div class="surface-card" style="margin-bottom: 16px; padding: 14px 16px;">
+      <div style="display: flex; gap: 8px; flex-wrap: wrap;" id="syllabus-module-tabs">
+        <button class="btn btn-primary btn-sm tab-btn active" data-mod="ALL">全部模組</button>
+        <button class="btn btn-secondary btn-sm tab-btn" data-mod="M1">M1 基礎物理</button>
+        <button class="btn btn-secondary btn-sm tab-btn" data-mod="M2">M2 劑量學</button>
+        <button class="btn btn-secondary btn-sm tab-btn" data-mod="M3">M3 治療計劃</button>
+        <button class="btn btn-secondary btn-sm tab-btn" data-mod="M4">M4 特殊技術</button>
+        <button class="btn btn-secondary btn-sm tab-btn" data-mod="M5">M5 品質保證</button>
+        <button class="btn btn-secondary btn-sm tab-btn" data-mod="M6">M6 影像QC</button>
+        <button class="btn btn-secondary btn-sm tab-btn" data-mod="M7">M7 輻防安全</button>
+        <button class="btn btn-secondary btn-sm tab-btn" data-mod="M8">M8 基礎醫學</button>
+        <button class="btn btn-secondary btn-sm tab-btn" data-mod="M9">M9 放射生物</button>
+        <button class="btn btn-secondary btn-sm tab-btn" data-mod="M10">M10 電腦概論</button>
+      </div>
+    </div>
+
+    <div id="syllabus-list" style="display: flex; flex-direction: column; gap: 12px;">
+      <div class="loader-container">
+        <div class="spinner"></div>
+        <div class="loading-text">載入課綱進度中</div>
+      </div>
     </div>
   </div>
 
-  <div class="surface-card" style="margin-bottom: 16px; padding: 14px 16px;">
-    <div style="display: flex; gap: 8px; flex-wrap: wrap;" id="syllabus-module-tabs">
-      <button class="btn btn-primary btn-sm tab-btn active" data-mod="ALL">全部模組</button>
-      <button class="btn btn-secondary btn-sm tab-btn" data-mod="M1">M1 基礎物理</button>
-      <button class="btn btn-secondary btn-sm tab-btn" data-mod="M2">M2 劑量學</button>
-      <button class="btn btn-secondary btn-sm tab-btn" data-mod="M3">M3 治療計劃</button>
-      <button class="btn btn-secondary btn-sm tab-btn" data-mod="M4">M4 特殊技術</button>
-      <button class="btn btn-secondary btn-sm tab-btn" data-mod="M5">M5 品質保證</button>
-      <button class="btn btn-secondary btn-sm tab-btn" data-mod="M6">M6 影像QC</button>
-      <button class="btn btn-secondary btn-sm tab-btn" data-mod="M7">M7 輻防安全</button>
-      <button class="btn btn-secondary btn-sm tab-btn" data-mod="M8">M8 基礎醫學</button>
-      <button class="btn btn-secondary btn-sm tab-btn" data-mod="M9">M9 放射生物</button>
-      <button class="btn btn-secondary btn-sm tab-btn" data-mod="M10">M10 電腦概論</button>
-    </div>
-  </div>
+  <!-- B. 單一畫面單元共讀工作台視圖 -->
+  <div id="syllabus-workspace-view" style="display: none;">
+    <div class="surface-card study-workspace-bar">
+      <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0;">
+        <button id="btn-ws-back" class="btn btn-secondary btn-sm">
+          <span class="material-icons-round">arrow_back</span>
+          <span>返回課綱</span>
+        </button>
+        <span id="ws-unit-badge" class="badge badge-progress mono-num">U1.1.1</span>
+        <h2 id="ws-unit-title" style="font-size: 16px; font-weight: 600; color: var(--text-main);">單元標題</h2>
+      </div>
 
-  <div id="syllabus-list" style="display: flex; flex-direction: column; gap: 12px;">
-    <div class="loader-container">
-      <div class="spinner"></div>
-      <div class="loading-text">載入課綱進度中</div>
+      <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+        <select id="ws-status-select" style="width: auto; height: 30px; padding: 2px 10px; font-size: 12px;">
+          <option value="not_started">未開始</option>
+          <option value="in_progress">進行中</option>
+          <option value="completed">已完成</option>
+          <option value="review">需複習</option>
+        </select>
+        <button id="btn-ws-timer" class="btn btn-primary btn-sm">
+          <span class="material-icons-round">timer</span>
+          <span>計時研讀</span>
+        </button>
+        <button id="btn-ws-layout" class="btn btn-secondary btn-sm" title="切換雙欄對照或專注單欄">
+          <span class="material-icons-round">view_sidebar</span>
+          <span id="ws-layout-label">雙欄對照</span>
+        </button>
+        <button id="btn-ws-nlm" class="btn btn-secondary btn-sm" title="備用：複製 NotebookLM 提示詞">
+          <span class="material-icons-round">content_copy</span>
+          <span>NotebookLM</span>
+        </button>
+      </div>
+    </div>
+
+    <div id="ws-grid" class="study-workspace-grid">
+      <!-- 左欄：AI 結構化講義 + 物理圖解 + 反白轉卡 + 助教追問 -->
+      <div id="ws-left-pane" class="surface-card">
+        <div class="card-header" style="flex-wrap: wrap;">
+          <div>
+            <h3 class="card-title">單元考點講義</h3>
+            <div id="ws-guide-meta" style="font-size: 12px; color: var(--text-dark); margin-top: 2px;">尚未生成講義</div>
+          </div>
+          <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+            <button id="btn-ws-diagrams" class="btn btn-secondary btn-sm" style="display: none;">
+              <span class="material-icons-round" style="color: var(--accent);">insights</span>
+              <span>標準圖解</span>
+            </button>
+            <button id="btn-ws-edit-guide" class="btn btn-secondary btn-sm">
+              <span class="material-icons-round">edit</span>
+              <span>編輯 / 貼入</span>
+            </button>
+            <button id="btn-ws-gen-guide" class="btn btn-primary btn-sm">
+              <span class="material-icons-round">auto_awesome</span>
+              <span>AI 精讀生成講義</span>
+            </button>
+          </div>
+        </div>
+
+        <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--border-color);">
+          <div><strong>文獻：</strong><span id="ws-unit-lit">--</span></div>
+          <div style="margin-top: 2px;"><strong>範疇：</strong><span id="ws-unit-chapters">--</span></div>
+        </div>
+
+        <!-- 手動貼入/編輯講義區 -->
+        <div id="ws-guide-editor-box" style="display: none; margin-bottom: 16px;">
+          <label class="form-label" for="ws-guide-editor-text">編輯講義 HTML / 文字（可直接貼入 NotebookLM 或個人整理的筆記）</label>
+          <textarea id="ws-guide-editor-text" rows="12" class="form-control mono-num" style="font-size: 12.5px;"></textarea>
+          <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px;">
+            <button id="btn-ws-cancel-edit" class="btn btn-secondary btn-sm">取消</button>
+            <button id="btn-ws-save-edit" class="btn btn-primary btn-sm">儲存講義</button>
+          </div>
+        </div>
+
+        <!-- 講義渲染區 -->
+        <div id="ws-guide-content" class="markdown-view study-guide-body"></div>
+
+        <!-- 反白文字快捷操作列 -->
+        <div id="ws-selection-bar" class="selection-action-bar">
+          <div style="font-size: 12px; color: var(--text-main); max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+            已選取：「<span id="ws-selection-preview"></span>」
+          </div>
+          <div style="display: flex; gap: 6px;">
+            <button id="btn-ws-sel-card" class="btn btn-primary btn-sm">
+              <span class="material-icons-round">style</span>
+              <span>轉為閃卡</span>
+            </button>
+            <button id="btn-ws-sel-note" class="btn btn-secondary btn-sm">
+              <span class="material-icons-round">note_add</span>
+              <span>加入筆記</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 單元 AI 助教追問 -->
+        <div style="margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border-color);">
+          <label class="form-label" for="ws-tutor-input">對公式或臨床情境有疑問？直接向單元 AI 助教追問：</label>
+          <div style="display: flex; gap: 8px;">
+            <input type="text" id="ws-tutor-input" class="form-control" placeholder="例如：為什麼 kQ 在高能光子對照能量越高反而越小？">
+            <button id="btn-ws-ask-tutor" class="btn btn-secondary" style="flex-shrink: 0;">
+              <span class="material-icons-round">send</span>
+              <span>提問</span>
+            </button>
+          </div>
+          <div id="ws-tutor-reply-box" class="sub-card" style="display: none; margin-top: 12px; border-left: 2px solid var(--accent);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; gap: 8px; flex-wrap: wrap;">
+              <span style="font-size: 12px; font-weight: 600; color: var(--accent);">AI 助教解答</span>
+              <div style="display: flex; gap: 6px;">
+                <button id="btn-ws-append-tutor" class="btn btn-secondary btn-sm">併入講義</button>
+                <button id="btn-ws-tutor-card" class="btn btn-secondary btn-sm">轉為閃卡</button>
+              </div>
+            </div>
+            <div id="ws-tutor-reply-content" class="markdown-view" style="font-size: 13.5px;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右欄：原文 PDF / 筆記與製卡 / 隨堂測驗 -->
+      <div id="ws-right-pane" class="surface-card">
+        <div class="workspace-tabs">
+          <button class="workspace-tab-btn active" data-ws-tab="pdf">
+            <span class="material-icons-round" style="font-size: 16px;">picture_as_pdf</span>
+            <span>原文 PDF</span>
+          </button>
+          <button class="workspace-tab-btn" data-ws-tab="notes">
+            <span class="material-icons-round" style="font-size: 16px;">edit_note</span>
+            <span>筆記與製卡</span>
+          </button>
+          <button class="workspace-tab-btn" data-ws-tab="quiz">
+            <span class="material-icons-round" style="font-size: 16px;">quiz</span>
+            <span>隨堂測驗</span>
+          </button>
+        </div>
+
+        <!-- Tab 1: 原文 PDF 檢視器 -->
+        <div id="ws-tab-pdf">
+          <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 10px;">
+            <select id="ws-pdf-select" class="form-control" style="flex: 1; font-size: 12.5px;"></select>
+            <a id="ws-pdf-newtab" class="btn btn-secondary btn-sm" target="_blank" rel="noopener" href="#" title="於新分頁全螢幕閱讀 PDF">
+              <span class="material-icons-round">open_in_new</span>
+            </a>
+          </div>
+          <iframe id="ws-pdf-frame" class="pdf-viewer-frame" title="單元文獻 PDF 檢視器"></iframe>
+          <div id="ws-pdf-empty" class="sub-card" style="display: none; text-align: center; padding: 32px; color: var(--text-muted);">
+            此單元未對應獨立 PDF 檔案，可直接閱讀左側 AI 講義或使用「筆記與製卡」功能。
+          </div>
+        </div>
+
+        <!-- Tab 2: 筆記與快速製卡 -->
+        <div id="ws-tab-notes" style="display: none;">
+          <div class="form-group">
+            <label class="form-label" for="ws-notes-textarea">單元個人研讀筆記</label>
+            <textarea id="ws-notes-textarea" rows="7" class="form-control" placeholder="從左側反白文字點「加入筆記」，或直接記錄重點公式"></textarea>
+            <button id="btn-ws-save-notes" class="btn btn-primary btn-sm" style="margin-top: 8px; width: 100%;">
+              <span class="material-icons-round">save</span>
+              <span>儲存單元筆記</span>
+            </button>
+          </div>
+
+          <div style="border-top: 1px solid var(--border-color); padding-top: 14px; margin-top: 14px;">
+            <div style="font-size: 13px; font-weight: 600; margin-bottom: 8px;">快速建立本單元 SM-2 記憶卡</div>
+            <div class="form-group" style="margin-bottom: 10px;">
+              <label class="form-label" for="ws-card-front">正面（問題 / 概念）</label>
+              <textarea id="ws-card-front" rows="2" class="form-control" placeholder="例如：TG-51 中圓柱游離腔的有效量測點偏移為何？"></textarea>
+            </div>
+            <div class="form-group" style="margin-bottom: 10px;">
+              <label class="form-label" for="ws-card-back">背面（答案 / 數值 / 公式）</label>
+              <textarea id="ws-card-back" rows="4" class="form-control" placeholder="從左側反白文字點「轉為閃卡」會自動填入此處"></textarea>
+            </div>
+            <button id="btn-ws-save-card" class="btn btn-secondary btn-sm" style="width: 100%;">
+              <span class="material-icons-round">style</span>
+              <span>存入 SM-2 記憶卡佇列</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Tab 3: 同屏隨堂測驗 -->
+        <div id="ws-tab-quiz" style="display: none;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <span style="font-size: 13px; color: var(--text-muted);">驗收本單元核心考點（3–5 題）</span>
+            <button id="btn-ws-load-quiz" class="btn btn-secondary btn-sm">
+              <span class="material-icons-round">refresh</span>
+              <span>載入 / 出新題</span>
+            </button>
+          </div>
+          <div id="ws-quiz-body" style="max-height: 500px; overflow-y: auto; padding-right: 4px;">
+            <div style="text-align: center; color: var(--text-dark); padding: 24px;">切換至此分頁將自動載入隨堂題目</div>
+          </div>
+          <div style="margin-top: 12px; display: flex; gap: 8px;">
+            <button id="btn-ws-submit-quiz" class="btn btn-primary btn-sm" style="flex: 1; display: none;">提交隨堂測驗</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>

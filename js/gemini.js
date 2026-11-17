@@ -7,7 +7,7 @@ const GeminiService = {
   /**
    * 呼叫 Gemini REST API 的共用核心函數
    */
-  async callGeminiAPI(prompt, systemInstruction, timeoutMs = 120000) {
+  async callGeminiAPI(prompt, systemInstruction, timeoutMs = 120000, extraParts = []) {
     const apiKey = await DB.getConfig('geminiApiKey');
     if (!apiKey || apiKey.trim() === '') {
       throw new Error('未設定 Gemini API Key，請先前往「系統設定」頁面填寫 API 金鑰。');
@@ -16,8 +16,12 @@ const GeminiService = {
     const model = (await DB.getConfig('geminiModel')) || 'gemini-2.5-flash';
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
+    const parts = Array.isArray(extraParts) && extraParts.length > 0
+      ? [...extraParts, { text: prompt }]
+      : [{ text: prompt }];
+
     const payload = {
-      contents: [{ parts: [{ text: prompt }] }],
+      contents: [{ parts }],
       generationConfig: {
         responseMimeType: 'application/json',
         temperature: 0.7
@@ -299,6 +303,140 @@ ${textContent}
 
     await DB.insertReviewCards(processedCards);
     return processedCards;
+  },
+
+  /**
+   * 從單元文獻字串解析內建 PDF 檔名與相對路徑
+   */
+  getUnitPdfFiles(literatureStr) {
+    if (!literatureStr) return [];
+    return literatureStr
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => /\.pdf$/i.test(s))
+      .map((name) => ({
+        name,
+        url: `考試範圍文獻資料/${encodeURIComponent(name)}`
+      }));
+  },
+
+  /**
+   * 嘗試載入 ≤ 12 MB 之內建文獻 PDF 作為 Gemini inlineData
+   */
+  async _tryLoadLocalPdfPart(literatureStr, maxBytes = 12 * 1024 * 1024) {
+    const files = this.getUnitPdfFiles(literatureStr);
+    for (const f of files) {
+      try {
+        const headRes = await fetch(f.url, { method: 'HEAD' });
+        if (!headRes.ok) continue;
+        const sizeHeader = headRes.headers.get('content-length');
+        if (sizeHeader && Number(sizeHeader) > maxBytes) {
+          console.info(`[GeminiService] 跳過大型 PDF (${f.name}, ${Math.round(Number(sizeHeader) / 1048576)} MB)`);
+          continue;
+        }
+
+        const res = await fetch(f.url);
+        if (!res.ok) continue;
+        const blob = await res.blob();
+        if (blob.size > maxBytes) continue;
+
+        const buf = await blob.arrayBuffer();
+        const bytes = new Uint8Array(buf);
+        let binary = '';
+        const chunkSize = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunkSize) {
+          binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+        }
+
+        return {
+          filename: f.name,
+          part: {
+            inlineData: {
+              mimeType: 'application/pdf',
+              data: btoa(binary)
+            }
+          }
+        };
+      } catch (e) {
+        console.warn(`[GeminiService] 載入本地 PDF 失敗 (${f.name}):`, e);
+      }
+    }
+    return null;
+  },
+
+  /**
+   * 一站式共讀工作台：為指定單元生成深度考點講義（優先直讀專案內建 PDF）
+   */
+  async generateUnitStudyGuideAI(unit, usePdf = true) {
+    if (!unit) throw new Error('找不到單元資訊');
+
+    let pdfLoaded = null;
+    if (usePdf) {
+      pdfLoaded = await this._tryLoadLocalPdfPart(unit.literature);
+    }
+
+    const extraParts = pdfLoaded ? [pdfLoaded.part] : [];
+    const sourceNotice = pdfLoaded
+      ? `已附上原文文獻 PDF《${pdfLoaded.filename}》，請優先依據該原文內容精確提煉重點與數值，不可憑空捏造公差數字。`
+      : `請依據醫學物理權威文獻《${unit.literature}》之對應章節進行整理。`;
+
+    const prompt = `請為中華民國醫學物理師證照（放射治療物理組）考生整理以下單元的深度自學講義：
+【單元代碼】${unit.unitId}
+【單元名稱】${unit.unitName}
+【所屬模組】[${unit.moduleId}] ${unit.moduleName}
+【指定文獻】${unit.literature}
+【學習範疇】${unit.chapters}
+【資料來源指示】${sourceNotice}
+
+請回傳一個 JSON Object，格式如下：
+{
+  "guideHtml": "使用乾淨語義化 HTML 撰寫的結構化講義..."
+}
+
+guideHtml 排版與內容要求：
+1. 請依序包含四個明確段落標題 (<h3>)：
+   - <h3>1. 核心物理觀念與臨床定義</h3>
+   - <h3>2. 關鍵計算公式與參數意義</h3>
+   - <h3>3. 國際指引規範與品管容許差 (Tolerances)</h3>（若有數值規範，請務必使用 <table><thead><tr><th>...</th></tr></thead><tbody>...</tbody></table> 呈現）
+   - <h3>4. 臨床常考陷阱與口試重點</h3>
+2. 數學公式請使用標準 LaTeX 格式：行內公式用 \\(...\\)，獨立推導公式用 $$...$$。
+3. 若該單元適合搭配標準曲線或幾何圖示說明，請在對應段落插入 \`<div class="mp-diagram" data-spec='{"type":"...","params":{...}}'></div>\`（可用 type: pdd, profile, lq_survival, decay, attenuation, tg51_setup, geometric_penumbra, field_matching, tg43_geometry, inhomogeneity_slab, linac_head）。
+4. 只使用 <h3>, <h4>, <p>, <ul>, <ol>, <li>, <strong>, <code>, <table>, <thead>, <tbody>, <tr>, <th>, <td> 與上述 diagram div，勿輸出 <script> 或 <html>/<body> 標籤。`;
+
+    const systemInstruction =
+      '你是一位資深醫學物理師與考照輔導教授。你整理的講義精準、有條理、重視臨床容許差與公式物理意義，完全以繁體中文與 JSON 物件格式回傳。';
+
+    const result = await this.callGeminiAPI(prompt, systemInstruction, 150000, extraParts);
+    return {
+      html: result.guideHtml || '',
+      usedPdfFilename: pdfLoaded ? pdfLoaded.filename : ''
+    };
+  },
+
+  /**
+   * 單元共讀工作台：針對當前單元講義內容進行 AI 助教即時追問
+   */
+  async askUnitTutorAI(unit, currentGuideHtml, userQuestion) {
+    const plainGuide = (currentGuideHtml || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 6000);
+    const prompt = `考生正在研讀醫學物理考照單元 [${unit.unitId}] ${unit.unitName}（文獻：${unit.literature}；範疇：${unit.chapters}）。
+
+【目前講義摘要】
+${plainGuide || '（尚未生成講義）'}
+
+【考生提問】
+${userQuestion}
+
+請以資深醫學物理師身分直接切中核心回答，若涉及公式請用 \\(...\\) 或 $$...$$ 表示，若涉及比較請使用 <table> 或條列式。
+只回傳一個 JSON Object：
+{
+  "answerHtml": "HTML 格式的精準解答（使用 <p>, <ul>, <li>, <strong>, <table> 等標籤）"
+}`;
+
+    const systemInstruction =
+      '你是一位專精放射治療與醫學影像物理的考照指導教授，回答精準直白不廢話，只以繁體中文與 JSON 物件回傳。';
+
+    const result = await this.callGeminiAPI(prompt, systemInstruction, 90000);
+    return result.answerHtml || '';
   },
 
   /**
