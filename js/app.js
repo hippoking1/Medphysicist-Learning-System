@@ -309,21 +309,66 @@ async function openUnitStudyWorkspace(unitId) {
     editorBox.style.display = 'none';
     if (u.studyGuide && u.studyGuide.trim()) {
       guideMeta.innerText = u.studyGuideSource ? `來源：${u.studyGuideSource}` : '已儲存講義';
-      guideContent.innerHTML = u.studyGuide;
+      guideContent.innerHTML =
+        typeof Diagrams !== 'undefined' && Diagrams.formatStudyGuide
+          ? Diagrams.formatStudyGuide(u.studyGuide, u.unitId)
+          : u.studyGuide;
       renderMath(guideContent);
     } else {
       guideMeta.innerText = '尚未建立講義';
       guideContent.innerHTML = `
         <div class="sub-card" style="text-align: center; padding: 32px 16px;">
           <div style="font-weight: 600; font-size: 15px; margin-bottom: 6px;">尚未建立本單元考點講義</div>
-          <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
-            點擊右上角「AI 精讀生成講義」，系統將自動讀取右側對應文獻 PDF（≤12MB）與課綱範疇整理重點，並永久儲存供日後秒開複習。
+          <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;">
+            推薦省 Token 流程：點上方「NotebookLM」複製專屬提示詞 → 於 NotebookLM 生成後點複製 → 回此處點<strong>「貼上 NotebookLM 筆記」</strong>，系統將以 0 Token 自動完成表格、LaTeX 公式與標準物理示意圖排版並存入雲端。
           </p>
         </div>
       `;
     }
   };
   renderGuideUI(unit);
+
+  // 初始化編輯器內的「插入物理示意圖」選單
+  const insertDiagSelect = document.getElementById('ws-insert-diagram-select');
+  const btnInsertDiag = document.getElementById('btn-ws-insert-diagram');
+  if (insertDiagSelect && typeof Diagrams !== 'undefined' && Diagrams.DIAGRAM_CATALOG) {
+    insertDiagSelect.innerHTML = '';
+    for (const [key, cat] of Object.entries(Diagrams.DIAGRAM_CATALOG)) {
+      insertDiagSelect.add(new Option(`${key} — ${cat.title.slice(0, 18)}`, key));
+    }
+    if (btnInsertDiag) {
+      btnInsertDiag.onclick = () => {
+        const tag = `\n[[DIAGRAM:${insertDiagSelect.value}]]\n`;
+        const start = editorText.selectionStart || editorText.value.length;
+        editorText.value = editorText.value.slice(0, start) + tag + editorText.value.slice(start);
+        editorText.focus();
+      };
+    }
+  }
+
+  // 一鍵從剪貼簿貼上 NotebookLM 筆記 (0 Token 自動轉 Markdown + 表格 + 物理示意圖)
+  const btnPasteNlm = document.getElementById('btn-ws-paste-nlm');
+  if (btnPasteNlm) {
+    btnPasteNlm.onclick = async () => {
+      try {
+        const clipText = await navigator.clipboard.readText();
+        if (clipText && clipText.trim()) {
+          const val = clipText.trim();
+          await DB.saveUnitStudyGuide(unit.unitId, val, 'NotebookLM 筆記匯入 (0 Token)');
+          unit.studyGuide = val;
+          unit.studyGuideSource = 'NotebookLM 筆記匯入 (0 Token)';
+          renderGuideUI(unit);
+          showToast('已貼上 NotebookLM 筆記並自動完成排版與物理示意圖渲染', 'success');
+          return;
+        }
+      } catch (e) {}
+      // 若瀏覽器未授權直接讀剪貼簿，自動展開編輯框並聚焦供使用者按 Ctrl+V
+      editorText.value = unit.studyGuide || '';
+      editorBox.style.display = 'block';
+      editorText.focus();
+      showToast('請在文字框按 Ctrl+V 貼上 NotebookLM 筆記後點擊「套用排版並儲存」', 'info');
+    };
+  }
 
   const btnGenGuide = document.getElementById('btn-ws-gen-guide');
   btnGenGuide.onclick = async () => {
@@ -358,11 +403,11 @@ async function openUnitStudyWorkspace(unitId) {
   };
   document.getElementById('btn-ws-save-edit').onclick = async () => {
     const val = editorText.value.trim();
-    await DB.saveUnitStudyGuide(unit.unitId, val, '手動編輯 / 匯入');
+    await DB.saveUnitStudyGuide(unit.unitId, val, 'NotebookLM / 手動排版講義');
     unit.studyGuide = val;
-    unit.studyGuideSource = '手動編輯 / 匯入';
+    unit.studyGuideSource = 'NotebookLM / 手動排版講義';
     renderGuideUI(unit);
-    showToast('講義內容已儲存', 'success');
+    showToast('已套用排版、生成示意圖並儲存講義', 'success');
   };
 
   // 3. 反白文字快捷轉閃卡 / 加入筆記
@@ -674,17 +719,32 @@ async function openNotebookLMModal(unitId) {
 
   if (titleEl) titleEl.innerText = `NotebookLM 提示詞 — [${unit.unitId}] ${unit.unitName}`;
 
+  const unitDiags = (typeof Diagrams !== 'undefined' && Diagrams.UNIT_DIAGRAMS[unit.unitId]) || [];
+  const recommendedTags = unitDiags.length > 0
+    ? unitDiags.map((d) => `[[DIAGRAM:${d.spec.type}]]（${d.title}）`).join('、')
+    : '[[DIAGRAM:pdd]]、[[DIAGRAM:profile]]、[[DIAGRAM:tg51_setup]]、[[DIAGRAM:geometric_penumbra]]、[[DIAGRAM:lq_survival]] 等';
+
   const promptText = `請扮演資深醫學物理考照教授，根據我所上傳的文獻檔案《${unit.literature}》，針對【${unit.unitName}】單元進行深度重點整理：
 
 【學習範疇】：${unit.chapters}
 
-請為我詳細條列並輸出：
-1. 核心物理觀念與定義（重要名詞解釋）
-2. 所有關鍵計算公式（請使用標準 LaTeX 格式表示，如 \\(D_{w,Q} = M \\cdot N_{D,w}^{Q_0} \\cdot k_Q\\)），並逐一說明各參數物理意義與典型數值
-3. 指引中的品管標準容許差值 (Tolerances)、量測頻率與實驗配置
-4. 臨床常考之陷阱題與口試重點
+請使用標準 Markdown 格式輸出以下四個部分：
+### 1. 核心物理觀念與臨床定義
+- 條列重要物理機制與名詞定義，重點詞請加 **粗體**。
 
-請使用繁體中文，格式清晰排版。`;
+### 2. 關鍵計算公式與參數推導
+- 行內公式請以 $...$ 包裹，獨立公式請以 $$...$$ 包裹（例如：$$D_{w,Q} = M \\cdot N_{D,w}^{Q_0} \\cdot k_Q$$），並逐一說明各代號物理意義與典型數值。
+
+### 3. 指引品管標準容許差值 (Tolerances) 與實驗配置
+- 請務必使用標準 Markdown 表格（| 項目 | 頻率 | 容許差 | 備註 |）整理本單元的關鍵數值規範。
+
+### 4. 臨床常考陷阱與口試必考題
+- 整理 3–5 個考照最愛考的觀念陷阱與口試標準回答邏輯。
+
+【重要：系統自動物理示意圖標記】
+請在上方對應的物理觀念或公式段落下方，單獨換行插入以下純文字圖表標記（請原樣輸出包含雙中括號，勿改寫，以便我的學習系統貼上時自動渲染高解析向量圖）：
+本單元優先推薦插入：${recommendedTags}
+（系統支援之全部圖表代碼：interaction_z_e, attenuation, linac_head, decay, pdd, tg51_setup, inhomogeneity_slab, profile, geometric_penumbra, gamma_index, tg43_geometry, field_matching, ctdi_phantom, lq_survival, tcp_ntcp, dicom_rt_flow）`;
 
   if (promptEl) promptEl.value = promptText;
 

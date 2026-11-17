@@ -346,13 +346,17 @@
               <span class="material-icons-round" style="color: var(--accent);">insights</span>
               <span>標準圖解</span>
             </button>
+            <button id="btn-ws-paste-nlm" class="btn btn-primary btn-sm" title="0 Token：直接將剛從 NotebookLM 複製的內容貼上、自動排版並生成物理示意圖">
+              <span class="material-icons-round">content_paste</span>
+              <span>貼上 NotebookLM 筆記</span>
+            </button>
             <button id="btn-ws-edit-guide" class="btn btn-secondary btn-sm">
               <span class="material-icons-round">edit</span>
-              <span>編輯 / 貼入</span>
+              <span>編輯 / 插入圖表</span>
             </button>
-            <button id="btn-ws-gen-guide" class="btn btn-primary btn-sm">
+            <button id="btn-ws-gen-guide" class="btn btn-secondary btn-sm" title="使用 Gemini API 生成講義">
               <span class="material-icons-round">auto_awesome</span>
-              <span>AI 精讀生成講義</span>
+              <span>AI 生成</span>
             </button>
           </div>
         </div>
@@ -362,13 +366,19 @@
           <div style="margin-top: 2px;"><strong>範疇：</strong><span id="ws-unit-chapters">--</span></div>
         </div>
 
-        <!-- 手動貼入/編輯講義區 -->
+        <!-- 手動貼入/編輯講義區 (支援 Markdown / LaTeX / 圖表標記插入) -->
         <div id="ws-guide-editor-box" style="display: none; margin-bottom: 16px;">
-          <label class="form-label" for="ws-guide-editor-text">編輯講義 HTML / 文字（可直接貼入 NotebookLM 或個人整理的筆記）</label>
-          <textarea id="ws-guide-editor-text" rows="12" class="form-control mono-num" style="font-size: 12.5px;"></textarea>
+          <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px;">
+            <label class="form-label" for="ws-guide-editor-text" style="margin-bottom: 0;">支援直接貼上 NotebookLM Markdown 筆記（自動轉換表格、LaTeX 公式與物理示意圖）</label>
+            <div style="display: flex; gap: 6px; align-items: center;">
+              <select id="ws-insert-diagram-select" class="form-control" style="width: auto; height: 28px; padding: 2px 8px; font-size: 12px;"></select>
+              <button type="button" id="btn-ws-insert-diagram" class="btn btn-secondary btn-sm">插入圖表</button>
+            </div>
+          </div>
+          <textarea id="ws-guide-editor-text" rows="12" class="form-control mono-num" style="font-size: 12.5px;" placeholder="在此貼上從 NotebookLM 複製的重點整理...&#10;也可插入 [[DIAGRAM:tg51_setup]] 等標記渲染標準物理示意圖"></textarea>
           <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px;">
             <button id="btn-ws-cancel-edit" class="btn btn-secondary btn-sm">取消</button>
-            <button id="btn-ws-save-edit" class="btn btn-primary btn-sm">儲存講義</button>
+            <button id="btn-ws-save-edit" class="btn btn-primary btn-sm">套用排版並儲存</button>
           </div>
         </div>
 

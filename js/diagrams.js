@@ -8,9 +8,118 @@
 
 const Diagrams = {
   /**
-   * 課綱核心單元內建標準圖解對照表
+   * 16 種標準確定性醫學物理圖表目錄 (供 NotebookLM 標記、關鍵字自動配圖與手動插入選單共用)
+   */
+  DIAGRAM_CATALOG: {
+    interaction_z_e: {
+      title: '光子與物質交互作用相對優勢圖 (原子序 Z vs. 光子能量 hν)',
+      caption: '低能高 Z 以光電效應 (τ ∝ Z³/E³) 為主；臨床 MV 治療能量 (0.5–10 MeV) 在軟組織 (Z≈7.4) 以康普吞散射 (σ) 為主；E ≥ 1.022 MeV 發生設定成對產生 (κ ∝ Z²)。',
+      keywords: ['光電效應', '康普吞', '成對產生', 'photoelectric', 'compton', 'pair production'],
+      spec: { type: 'interaction_z_e', params: {} }
+    },
+    attenuation: {
+      title: '窄射束與寬射束 HVL 衰減與射束硬化 (Beam Hardening)',
+      caption: '單能窄射束符合指數衰減 I = I₀·e^(-μx)；寬射束含散射增建因子 B > 1，多能譜射束穿透後 HVL₂ > HVL₁。',
+      keywords: ['半值層', 'HVL', 'TVL', '窄射束', '寬射束', '射束硬化'],
+      spec: { type: 'attenuation', params: { hvl1: 3.0, showBroadBeam: true } }
+    },
+    linac_head: {
+      title: '醫療用直線加速器機頭構造 (光子模式 vs. 電子模式)',
+      caption: '光子模式經 X-ray Target 與 Flattening Filter；電子模式移開靶與整平濾器，改以 Scattering Foil 與 Electron Applicator 展寬射束。',
+      keywords: ['整平濾器', '散射箔', 'flattening filter', 'scattering foil', '機頭'],
+      spec: { type: 'linac_head', params: {} }
+    },
+    decay: {
+      title: '放射性核種母子核衰變平衡曲線 (Transient vs. Secular Equilibrium)',
+      caption: '瞬態平衡 (⁹⁹Mo → ⁹⁹ᵐTc, T₁ > T₂) 子核活度於 t_max 達最高峰；永恆平衡 (T₁ ≫ T₂) 子母核活度趨於相等。',
+      keywords: ['瞬態平衡', '永恆平衡', '半衰期', 'secular', 'transient', '衰變常數'],
+      spec: { type: 'decay', params: { t1: 66, t2: 6 } }
+    },
+    pdd: {
+      title: '百分深度劑量曲線 (PDD：光子 / 電子 / 質子 Bragg Peak & SOBP)',
+      caption: '高能光子具皮膚免除與建成區 (d_max)；電子具明確實務射程 Rp 與制動輻射尾；質子具尖銳 Bragg Peak 與臨床展寬峰 SOBP。',
+      keywords: ['PDD', '百分深度劑量', 'dmax', '建成區', 'Bragg Peak', 'SOBP', 'Rp'],
+      spec: { type: 'pdd', params: { curves: ['photon_6mv', 'photon_18mv', 'electron_12mev'] } }
+    },
+    tg51_setup: {
+      title: 'AAPM TG-51 / IAEA TRS-398 水中吸收劑量參考校正幾何',
+      caption: '於水假體參考深度 d_ref = 10 cm 量測，圓柱型游離腔在光子射束之有效量測點 P_eff 位於腔心上游 0.6 r_cav (TG-51) 或 0.5 r_cav (TRS-398)。',
+      keywords: ['TG-51', 'TG51', 'TRS-398', 'TRS398', '有效量測點', 'kQ', '參考深度'],
+      spec: { type: 'tg51_setup', params: { setup: 'SSD', dref: 10, field: '10×10 cm²' } }
+    },
+    inhomogeneity_slab: {
+      title: '組織不均勻界面效應 (水 → 肺 → 骨 → 水)',
+      caption: '低密度肺組織減少光子衰減但引發側向二次電子失衡；高密度皮質骨界面產生背向散射峰值與遠端遮蔽衰減。',
+      keywords: ['不均勻', 'inhomogeneity', '肺組織', '電子失衡', 'ETAR'],
+      spec: { type: 'inhomogeneity_slab', params: {} }
+    },
+    profile: {
+      title: '離軸劑量剖面比較 (Flattening Filter vs. FFF 無整平濾器)',
+      caption: 'FF 射束具平坦區與邊緣 Horns，50% 劑量點定義幾何照野寬度，80%–20% 定義物理半影；FFF 射束中心劑量率高且照野外散射低。',
+      keywords: ['離軸', 'profile', 'FFF', '平坦度', '對稱性', 'horns'],
+      spec: { type: 'profile', params: { showFFF: true, fieldSize: 10 } }
+    },
+    geometric_penumbra: {
+      title: '幾何半影 (Geometric Penumbra) 相似三角形推導',
+      caption: 'Pg = s × (SSD + d - SCD) / SCD；縮小射源尺寸 s 或增加準直儀距離 SCD 可減小半影寬度。',
+      keywords: ['幾何半影', 'penumbra', 'SCD', 'MLC', '半影'],
+      spec: { type: 'geometric_penumbra', params: { s: 2, scd: 50, ssd: 100, d: 10 } }
+    },
+    gamma_index: {
+      title: 'IMRT 劑量驗證 Gamma Index (ΔD / DTA) 二維橢圓判定準則',
+      caption: '結合劑量差 ΔD (通常 3%) 與吻合距離 DTA (通常 3 mm) 構成正規化橢圓，γ ≤ 1 代表該點通過驗證。',
+      keywords: ['Gamma', 'DTA', 'IMRT', 'TG-119', 'TG-120', '劑量驗證'],
+      spec: { type: 'gamma_index', params: { dd: '3%', dta: '3 mm' } }
+    },
+    tg43_geometry: {
+      title: 'AAPM TG-43 近接治療線射源極座標幾何系統',
+      caption: '以活性長度 L、距離 r、極角 θ 與端點張角 β 計算幾何因子 G_L(r, θ)，參考點定義於 P(r₀=1 cm, θ₀=90°)。',
+      keywords: ['TG-43', 'TG43', '近接治療', '後裝', '幾何因子', 'Ir-192'],
+      spec: { type: 'tg43_geometry', params: { L: 3.5 } }
+    },
+    field_matching: {
+      title: '相鄰照野發散銜接與表面間隙 (Gap) 幾何計算',
+      caption: '表面間隙 ΔG = ½·L₁·(d/SSD₁) + ½·L₂·(d/SSD₂)，避免相鄰發散射束在目標深度 d 上方重疊造成熱點 (Hot spot)。',
+      keywords: ['照野銜接', 'gap', '發散', 'TBI', '鶴脊照射'],
+      spec: { type: 'field_matching', params: { l1: 20, l2: 20, d: 10 } }
+    },
+    ctdi_phantom: {
+      title: 'CT 輻射劑量指標 (CTDI₁₀₀ / CTDIw) 標準 PMMA 假體五孔配置',
+      caption: '頭部假體直徑 16 cm、體部假體直徑 32 cm；加權指標 CTDIw = ⅓ CTDI₁₀₀(center) + ⅔ CTDI₁₀₀(periphery)，CTDIvol = CTDIw / Pitch。',
+      keywords: ['CTDI', 'DLP', 'Pitch', '電腦斷層', '假體'],
+      spec: { type: 'ctdi_phantom', params: {} }
+    },
+    lq_survival: {
+      title: 'Linear-Quadratic (LQ) 細胞存活半對數曲線 (低 LET vs. 高 LET)',
+      caption: 'S(D) = exp(-αD - βD²)；腫瘤/早反應組織 α/β 高 (~10 Gy)，晚反應正常組織 α/β 低 (~3 Gy) 對分次劑量變化更敏感。',
+      keywords: ['LQ', '存活曲線', 'α/β', 'alpha/beta', 'LET', 'BED', 'EQD2'],
+      spec: { type: 'lq_survival', params: {} }
+    },
+    tcp_ntcp: {
+      title: '腫瘤控制機率 (TCP) 與正常組織併發症機率 (NTCP) 治療視窗',
+      caption: '兩條 S 型劑量反應曲線間距愈寬，治療指數 (Therapeutic Ratio) 與治療視窗愈佳；危及器官劑量限制參照 QUANTEC。',
+      keywords: ['TCP', 'NTCP', '治療視窗', 'QUANTEC', 'OAR', 'OER'],
+      spec: { type: 'tcp_ntcp', params: {} }
+    },
+    dicom_rt_flow: {
+      title: 'DICOM-RT 四大核心物件與臨床放療資訊流 (PACS / TPS / OIS)',
+      caption: 'CT/MR 影像經圈選產出 RT Structure Set，於 TPS 計算產出 RT Plan 與 RT Dose，最終傳送至 OIS 與加速器執行治療。',
+      keywords: ['DICOM', 'PACS', 'RT Plan', 'RT Struct', 'RT Dose', 'HL7'],
+      spec: { type: 'dicom_rt_flow', params: {} }
+    }
+  },
+
+  /**
+   * 課綱核心單元內建標準圖解對照表 (涵蓋 M1 ~ M10)
    */
   UNIT_DIAGRAMS: {
+    'U1.1.1': [
+      {
+        title: '光子與物質交互作用相對優勢圖 (Z vs. hν)',
+        caption: '低能高 Z 以光電效應 (τ ∝ Z³/E³) 為主；臨床 MV 射束於軟組織以康普吞效應 (σ) 為主；E ≥ 1.022 MeV 發生成對產生 (κ)。',
+        spec: { type: 'interaction_z_e', params: {} }
+      }
+    ],
     'U1.1.2': [
       {
         title: '窄射束與寬射束 HVL 衰減與射束硬化 (Beam Hardening)',
@@ -84,6 +193,20 @@ const Diagrams = {
         spec: { type: 'geometric_penumbra', params: { s: 2, scd: 50, ssd: 100, d: 10 } }
       }
     ],
+    'U3.2.2': [
+      {
+        title: 'IMRT 劑量驗證 Gamma Index (ΔD / DTA) 判定準則',
+        caption: '結合劑量差 ΔD (3%) 與距離吻合度 DTA (3 mm) 構成橢圓判定標準，γ ≤ 1 代表通過驗證。',
+        spec: { type: 'gamma_index', params: { dd: '3%', dta: '3 mm' } }
+      }
+    ],
+    'U4.1.1': [
+      {
+        title: '小照野與立體定位幾何半影控制',
+        caption: 'SRS 小照野對幾何半影與側向電子失衡極度敏感，常藉助微型 MLC 或圓錐準直儀 (Cone) 提高 SCD 降低半影。',
+        spec: { type: 'geometric_penumbra', params: { s: 1.5, scd: 65, ssd: 100, d: 8 } }
+      }
+    ],
     'U4.1.3': [
       {
         title: 'AAPM TG-43 近接治療線射源極座標幾何系統',
@@ -98,6 +221,34 @@ const Diagrams = {
         spec: { type: 'field_matching', params: { l1: 20, l2: 20, ssd: 100, d: 10 } }
       }
     ],
+    'U5.1.2': [
+      {
+        title: 'TG-142 直線加速器光束平坦度與對稱性品管剖面',
+        caption: '依據 TG-142 規範監控光子與電子射束剖面平坦度、對稱性變化與照野邊界準確度。',
+        spec: { type: 'profile', params: { showFFF: true, fieldSize: 10 } }
+      }
+    ],
+    'U5.2.1': [
+      {
+        title: 'IMRT QA Gamma Index 二維劑量與距離複合分析',
+        caption: '臨床常用 3%/3mm 或 2%/2mm 評估計算劑量與實測劑量分佈吻合度，要求通過率 (γ ≤ 1) 達 95% 以上。',
+        spec: { type: 'gamma_index', params: { dd: '3%', dta: '3 mm' } }
+      }
+    ],
+    'U6.2.2': [
+      {
+        title: 'CT 劑量指標 (CTDI₁₀₀ / CTDIw) 標準假體五孔量測配置',
+        caption: '使用 100 mm 鉛筆型游離腔量測中心孔 (c) 與外圍 1 cm 處四孔 (p)，CTDIw = ⅓ CTDIc + ⅔ CTDIp。',
+        spec: { type: 'ctdi_phantom', params: {} }
+      }
+    ],
+    'U7.1.1': [
+      {
+        title: 'NCRP-147 屏蔽厚度與寬射束衰減關係',
+        caption: '主屏蔽與次屏蔽設計結合工作負載 W、使用因數 U、佔用因數 T 與寬射束半值層/十值層衰減曲線。',
+        spec: { type: 'attenuation', params: { hvl1: 2.8, showBroadBeam: true } }
+      }
+    ],
     'U7.2.1': [
       {
         title: '輻射衰減與半值層 (HVL) / 十值層 (TVL) 指數關係',
@@ -105,11 +256,39 @@ const Diagrams = {
         spec: { type: 'attenuation', params: { hvl1: 2.5, showBroadBeam: true } }
       }
     ],
+    'U8.2.1': [
+      {
+        title: 'TCP 腫瘤控制率與 NTCP 正常組織併發症治療視窗',
+        caption: '臨床放療處方設計旨在最大化 TCP 並將危及器官 (OAR) 劑量控制在 QUANTEC 容許之 NTCP 安全上限內。',
+        spec: { type: 'tcp_ntcp', params: {} }
+      }
+    ],
     'U9.1.1': [
       {
         title: 'Linear-Quadratic (LQ) 細胞存活曲線 (低 LET vs. 高 LET)',
         caption: '低 LET (X/γ 光子) 具明顯肩區 (Shoulder)，S = exp(-αD - βD²)；高 LET (α/中子) 呈直線，OER 與修復能力大幅降低。',
         spec: { type: 'lq_survival', params: { alphaBetaLow: 10, alphaBetaLate: 3 } }
+      }
+    ],
+    'U9.1.2': [
+      {
+        title: '早反應組織 (α/β≈10) 與晚反應組織 (α/β≈3) 存活曲線比較',
+        caption: '晚反應正常組織 β 權重大、曲線彎曲明顯，分次照射可顯著保護晚反應組織。',
+        spec: { type: 'lq_survival', params: { alphaBetaLow: 10, alphaBetaLate: 3 } }
+      }
+    ],
+    'U9.2.1': [
+      {
+        title: '腫瘤控制機率 (TCP) 與正常組織併發症 (NTCP) 劑量反應曲線',
+        caption: '利用增氧劑或分次治療將 TCP 曲線左移、NTCP 曲線右移以擴大治療視窗。',
+        spec: { type: 'tcp_ntcp', params: {} }
+      }
+    ],
+    'U10.1.2': [
+      {
+        title: 'DICOM-RT 四大核心物件與臨床放療資訊傳輸架構',
+        caption: '涵蓋 CT/MR 影像、RT Structure Set (靶區與 OAR 輪廓)、RT Plan (射束與 MLC 參數) 及 RT Dose (三維劑量矩陣)。',
+        spec: { type: 'dicom_rt_flow', params: {} }
       }
     ]
   },
@@ -188,9 +367,246 @@ const Diagrams = {
         return this.drawInhomogeneitySlab(p);
       case 'linac_head':
         return this.drawLinacHead(p);
+      case 'interaction_z_e':
+        return this.plotInteractionZE(p);
+      case 'gamma_index':
+        return this.drawGammaIndex(p);
+      case 'ctdi_phantom':
+        return this.drawCTDIPhantom(p);
+      case 'tcp_ntcp':
+        return this.plotTCPNTCP(p);
+      case 'dicom_rt_flow':
+        return this.drawDicomRTFlow(p);
       default:
         return '';
     }
+  },
+
+  /**
+   * 0-Token 公式保護型 Markdown + 圖表標記渲染器 (專為 NotebookLM 複製貼上設計)
+   */
+  formatStudyGuide(rawText, unitId = '') {
+    if (!rawText || !rawText.trim()) return '';
+    let text = rawText.replace(/\r\n/g, '\n').trim();
+
+    // 1. 保護 LaTeX 公式 ($$...$$, \[...\], \(...\), $...$) 避免底線 _ 與星號 * 被 Markdown 破壞
+    const mathTokens = [];
+    const saveMath = (m) => {
+      const id = `@@MP_MATH_${mathTokens.length}@@`;
+      mathTokens.push(m);
+      return id;
+    };
+    text = text.replace(/\$\$[\s\S]*?\$\$/g, saveMath);
+    text = text.replace(/\\\[[\s\S]*?\\\]/g, saveMath);
+    text = text.replace(/\\\([\s\S]*?\\\)/g, saveMath);
+    text = text.replace(/\$(?!\s)([^$\n]+?)(?<!\s)\$/g, saveMath);
+
+    // 2. 解析純文字圖表標記 [[DIAGRAM:type]] 或 [[DIAGRAM:type|k=v]]
+    let injectedDiagramCount = 0;
+    const renderDiagramCard = (typeKey, customTitle, customCaption, customParams) => {
+      const cat = this.DIAGRAM_CATALOG[typeKey];
+      if (!cat) return '';
+      injectedDiagramCount++;
+      const spec = {
+        type: typeKey,
+        params: { ...(cat.spec.params || {}), ...(customParams || {}) }
+      };
+      return `<div class="mp-diagram-block"><div class="mp-diagram-title">${customTitle || cat.title}</div><div class="mp-diagram">${this.renderSpec(spec)}</div><div class="mp-diagram-caption">${customCaption || cat.caption}</div></div>`;
+    };
+
+    const diagramTokens = [];
+    text = text.replace(/`?\*{0,2}\[\[\s*DIAGRAM\s*:\s*([a-zA-Z0-9_-]+)(?:\|([^\]]+))?\s*\]\]\*{0,2}`?/gi, (_, rawType, rawParams) => {
+      const typeKey = rawType.trim().toLowerCase();
+      const params = {};
+      if (rawParams) {
+        rawParams.split(',').forEach((kv) => {
+          const [k, v] = kv.split('=').map((s) => (s || '').trim());
+          if (k && v !== undefined) params[k] = isNaN(Number(v)) ? v : Number(v);
+        });
+      }
+      const html = renderDiagramCard(typeKey, null, null, params);
+      if (!html) return '';
+      const tok = `@@MP_DIAG_${diagramTokens.length}@@`;
+      diagramTokens.push(html);
+      return `\n${tok}\n`;
+    });
+
+    if (text.includes('class="mp-diagram"') || text.includes('<svg')) {
+      injectedDiagramCount++;
+    }
+
+    // 3. 若內容主要是 Markdown (而非純 HTML)，執行結構化 Markdown -> HTML 轉換
+    const looksLikeHtml = /<(h[1-4]|table|ul|ol|p|div)\b/i.test(text) && !/^#{1,4}\s/m.test(text);
+    let htmlOut = text;
+
+    if (!looksLikeHtml) {
+      const formatInline = (str) =>
+        str
+          .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+          .replace(/`([^`]+)`/g, '<code>$1</code>');
+
+      const lines = text.split('\n');
+      const out = [];
+      let i = 0;
+
+      while (i < lines.length) {
+        const line = lines[i].trimEnd();
+        const trimmed = line.trim();
+
+        if (!trimmed) {
+          i++;
+          continue;
+        }
+
+        // 圖表佔位符直接輸出
+        if (/^@@MP_DIAG_\d+@@$/.test(trimmed)) {
+          out.push(trimmed);
+          i++;
+          continue;
+        }
+
+        // Fenced Code Block ```
+        if (trimmed.startsWith('```')) {
+          const codeLines = [];
+          i++;
+          while (i < lines.length && !lines[i].trim().startsWith('```')) {
+            codeLines.push(lines[i]);
+            i++;
+          }
+          i++;
+          out.push(`<pre><code>${codeLines.join('\n')}</code></pre>`);
+          continue;
+        }
+
+        // Markdown 表格 (| col | col |)
+        if (trimmed.startsWith('|') && i + 1 < lines.length && /^\s*\|?\s*[-:]+[-|\s:]*/.test(lines[i + 1])) {
+          const parseRow = (r) =>
+            r
+              .trim()
+              .replace(/^\|/, '')
+              .replace(/\|$/, '')
+              .split('|')
+              .map((c) => formatInline(c.trim()));
+
+          const headers = parseRow(trimmed);
+          i += 2; // 跳過表頭與分隔線
+          const bodyRows = [];
+          while (i < lines.length && lines[i].trim().startsWith('|')) {
+            bodyRows.push(parseRow(lines[i]));
+            i++;
+          }
+          const thHtml = headers.map((h) => `<th>${h}</th>`).join('');
+          const tbHtml = bodyRows
+            .map((row) => `<tr>${row.map((c) => `<td>${c}</td>`).join('')}</tr>`)
+            .join('');
+          out.push(`<table><thead><tr>${thHtml}</tr></thead><tbody>${tbHtml}</tbody></table>`);
+          continue;
+        }
+
+        // 標題 (# ~ ####)
+        const hMatch = trimmed.match(/^(#{1,4})\s+(.+)$/);
+        if (hMatch) {
+          const level = hMatch[1].length <= 3 ? 'h3' : 'h4';
+          out.push(`<${level}>${formatInline(hMatch[2].trim())}</${level}>`);
+          i++;
+          continue;
+        }
+
+        // 水平分隔線
+        if (/^(-{3,}|\*{3,})$/.test(trimmed)) {
+          out.push('<hr style="border: none; border-top: 1px solid var(--border-color); margin: 14px 0;">');
+          i++;
+          continue;
+        }
+
+        // 引用區塊 (> ...)
+        if (trimmed.startsWith('>')) {
+          const quoteLines = [];
+          while (i < lines.length && lines[i].trim().startsWith('>')) {
+            quoteLines.push(formatInline(lines[i].trim().replace(/^>\s?/, '')));
+            i++;
+          }
+          out.push(`<div class="unit-notes-box">${quoteLines.join('<br>')}</div>`);
+          continue;
+        }
+
+        // 無序清單 (- / * / •)
+        if (/^([-*•])\s+/.test(trimmed)) {
+          const items = [];
+          while (i < lines.length && /^\s*([-*•])\s+/.test(lines[i])) {
+            items.push(`<li>${formatInline(lines[i].trim().replace(/^([-*•])\s+/, ''))}</li>`);
+            i++;
+          }
+          out.push(`<ul>${items.join('')}</ul>`);
+          continue;
+        }
+
+        // 有序清單 (1. )
+        if (/^\d+[.)]\s+/.test(trimmed)) {
+          const items = [];
+          while (i < lines.length && /^\s*\d+[.)]\s+/.test(lines[i])) {
+            items.push(`<li>${formatInline(lines[i].trim().replace(/^\d+[.)]\s+/, ''))}</li>`);
+            i++;
+          }
+          out.push(`<ol>${items.join('')}</ol>`);
+          continue;
+        }
+
+        // 若該行已是 HTML 區塊標籤則直接保留
+        if (/^<(h[1-6]|div|table|ul|ol|p|blockquote|hr)/i.test(trimmed)) {
+          out.push(line);
+          i++;
+          continue;
+        }
+
+        // 一般段落
+        out.push(`<p>${formatInline(trimmed)}</p>`);
+        i++;
+      }
+
+      htmlOut = out.join('\n');
+    }
+
+    // 4. 還原圖表佔位符
+    diagramTokens.forEach((diagHtml, idx) => {
+      htmlOut = htmlOut.replace(`@@MP_DIAG_${idx}@@`, diagHtml);
+    });
+
+    // 5. 保底自動配圖：若貼上的內容完全未帶 [[DIAGRAM:...]] 標記，自動根據單元 ID 與內文關鍵字補上對應標準物理圖解
+    if (injectedDiagramCount === 0) {
+      const autoBlocks = [];
+      const addedTypes = new Set();
+
+      const unitList = (unitId && this.UNIT_DIAGRAMS[unitId]) || [];
+      unitList.forEach((item) => {
+        if (!addedTypes.has(item.spec.type)) {
+          addedTypes.add(item.spec.type);
+          autoBlocks.push(
+            `<div class="mp-diagram-block"><div class="mp-diagram-title">${item.title}</div><div class="mp-diagram">${this.renderSpec(item.spec)}</div><div class="mp-diagram-caption">${item.caption}</div></div>`
+          );
+        }
+      });
+
+      const lowerRaw = rawText.toLowerCase();
+      for (const [typeKey, cat] of Object.entries(this.DIAGRAM_CATALOG)) {
+        if (addedTypes.has(typeKey) || autoBlocks.length >= 2) continue;
+        if (cat.keywords.some((kw) => lowerRaw.includes(kw.toLowerCase()))) {
+          addedTypes.add(typeKey);
+          autoBlocks.push(renderDiagramCard(typeKey));
+        }
+      }
+
+      if (autoBlocks.length > 0) {
+        htmlOut += `\n<h3>標準醫學物理圖解對照</h3>\n${autoBlocks.join('\n')}`;
+      }
+    }
+
+    // 6. 還原保護的 LaTeX 數學公式
+    mathTokens.forEach((mathStr, idx) => {
+      htmlOut = htmlOut.replace(`@@MP_MATH_${idx}@@`, () => mathStr);
+    });
+
+    return htmlOut;
   },
 
   // ==========================================
@@ -744,5 +1160,181 @@ const Diagrams = {
       <text x="370" y="238" text-anchor="middle" fill="var(--success)" font-size="10">Electron Applicator</text>
     `;
     return this._svgShell('0 0 500 255', '', body);
+  },
+
+  // ==========================================
+  // 3. 新增 M1 / M5 / M6 / M8 / M9 / M10 核心物理圖表
+  // ==========================================
+  plotInteractionZE() {
+    const pad = { top: 28, right: 24, bottom: 44, left: 54 };
+    const w = 520;
+    const h = 265;
+    const plotW = w - pad.left - pad.right;
+    const plotH = h - pad.top - pad.bottom;
+
+    const xTicks = [
+      { val: -2, label: '0.01' },
+      { val: -1, label: '0.1' },
+      { val: 0, label: '1' },
+      { val: 1, label: '10' },
+      { val: 2, label: '100' }
+    ];
+    const yTicks = [20, 40, 60, 80, 100].map((v) => ({ val: v, label: `${v}` }));
+    const { grid, xMap, yMap } = this._buildAxes(pad, plotW, plotH, '光子能量 Photon Energy hν (MeV, log)', '吸收體原子序 Atomic Number Z', xTicks, yTicks, [-2, 2], [0, 105]);
+
+    // τ = σ 分界線 (左線) 與 σ = κ 分界線 (右線, E > 1.022 MeV)
+    const leftBound = (logE) => Math.min(100, Math.max(4, 52 * Math.pow(10, 0.72 * (logE + 0.65))));
+    const rightBound = (logE) => Math.min(100, Math.max(6, 95 - 52 * (logE - 0.35)));
+
+    let body = grid;
+    body += `<path d="${this._samplePath(leftBound, -1.7, 0.05, 80, xMap, yMap)}" fill="none" stroke="var(--accent)" stroke-width="2.4"/>`;
+    body += `<path d="${this._samplePath(rightBound, 0.35, 1.85, 80, xMap, yMap)}" fill="none" stroke="var(--warning)" stroke-width="2.4"/>`;
+
+    // 軟組織 Z ≈ 7.4 參考線
+    const zSoftY = yMap(7.4).toFixed(1);
+    body += `<line x1="${pad.left}" y1="${zSoftY}" x2="${pad.left + plotW}" y2="${zSoftY}" stroke="var(--success)" stroke-dasharray="4 3" stroke-width="1.2"/>`;
+    body += `<text x="${pad.left + plotW - 6}" y="${Number(zSoftY) - 5}" text-anchor="end" fill="var(--success)" font-size="9.5" font-family="var(--font-mono)">軟組織 Z_eff ≈ 7.4</text>`;
+
+    body += `<text x="${xMap(-1.25)}" y="${yMap(65)}" text-anchor="middle" fill="var(--accent)" font-size="11.5" font-weight="600">光電效應優勢區</text>`;
+    body += `<text x="${xMap(-1.25)}" y="${yMap(55)}" text-anchor="middle" fill="var(--text-muted)" font-size="10" font-family="var(--font-mono)">τ/ρ ∝ Z³ / E³</text>`;
+
+    body += `<text x="${xMap(0.05)}" y="${yMap(45)}" text-anchor="middle" fill="var(--text-main)" font-size="11.5" font-weight="600">康普吞散射優勢區</text>`;
+    body += `<text x="${xMap(0.05)}" y="${yMap(35)}" text-anchor="middle" fill="var(--text-muted)" font-size="10" font-family="var(--font-mono)">σ/ρ 與 Z 無關 (∝ 전자密度)</text>`;
+
+    body += `<text x="${xMap(1.38)}" y="${yMap(68)}" text-anchor="middle" fill="var(--warning)" font-size="11.5" font-weight="600">成對產生優勢區</text>`;
+    body += `<text x="${xMap(1.38)}" y="${yMap(58)}" text-anchor="middle" fill="var(--text-muted)" font-size="10" font-family="var(--font-mono)">κ/ρ ∝ Z (閾值 1.022 MeV)</text>`;
+
+    return this._svgShell(`0 0 ${w} ${h}`, '', body);
+  },
+
+  drawGammaIndex(params) {
+    const dd = params.dd || '3%';
+    const dta = params.dta || '3 mm';
+    const body = `
+      <!-- 坐標軸 -->
+      <line x1="70" y1="135" x2="430" y2="135" stroke="var(--border-strong)" stroke-width="1.4" marker-end="url(#mp-arrow)"/>
+      <line x1="250" y1="230" x2="250" y2="25" stroke="var(--border-strong)" stroke-width="1.4" marker-end="url(#mp-arrow)"/>
+      <text x="435" y="139" fill="var(--text-main)" font-size="10.5" font-weight="500">空間距離差 Δr (mm)</text>
+      <text x="250" y="16" text-anchor="middle" fill="var(--text-main)" font-size="10.5" font-weight="500">劑量差 ΔD (%)</text>
+
+      <!-- γ = 1 判定橢圓 -->
+      <ellipse cx="250" cy="135" rx="125" ry="78" fill="var(--accent-subtle)" stroke="var(--accent)" stroke-width="2.2"/>
+      <text x="250" y="198" text-anchor="middle" fill="var(--accent)" font-size="10.5" font-family="var(--font-mono)">γ = √[(Δr/DTA)² + (ΔD/ΔD_tol)²] ≤ 1 (Pass)</text>
+
+      <!-- 軸截距標註 -->
+      <circle cx="375" cy="135" r="3.5" fill="var(--accent)"/>
+      <text x="380" y="152" fill="var(--accent)" font-size="10" font-family="var(--font-mono)">+DTA (${dta})</text>
+      <circle cx="125" cy="135" r="3.5" fill="var(--accent)"/>
+      <text x="120" y="152" text-anchor="end" fill="var(--accent)" font-size="10" font-family="var(--font-mono)">-DTA</text>
+      <circle cx="250" cy="57" r="3.5" fill="var(--accent)"/>
+      <text x="260" y="54" fill="var(--accent)" font-size="10" font-family="var(--font-mono)">+ΔD_tol (${dd})</text>
+
+      <!-- 通過點 vs 失敗點 -->
+      <line x1="250" y1="135" x2="312" y2="95" stroke="var(--success)" stroke-width="1.8"/>
+      <circle cx="312" cy="95" r="4" fill="var(--success)"/>
+      <text x="320" y="94" fill="var(--success)" font-size="10" font-weight="600" font-family="var(--font-mono)">P₁ (γ = 0.72 ≤ 1 通過)</text>
+
+      <line x1="250" y1="135" x2="388" y2="62" stroke="var(--danger)" stroke-width="1.6" stroke-dasharray="4 3"/>
+      <circle cx="388" cy="62" r="4" fill="var(--danger)"/>
+      <text x="395" y="60" fill="var(--danger)" font-size="10" font-weight="600" font-family="var(--font-mono)">P₂ (γ = 1.45 > 1 失敗)</text>
+    `;
+    return this._svgShell('0 0 500 245', '', body);
+  },
+
+  drawCTDIPhantom() {
+    const body = `
+      <!-- PMMA 圓柱假體截面 -->
+      <circle cx="165" cy="128" r="92" fill="var(--accent-subtle)" stroke="var(--accent)" stroke-width="2"/>
+      <circle cx="165" cy="128" r="76" fill="none" stroke="var(--border-color)" stroke-dasharray="3 3"/>
+      <text x="165" y="238" text-anchor="middle" fill="var(--text-main)" font-size="11" font-weight="600">PMMA 圓柱假體 (Head 16cm / Body 32cm)</text>
+
+      <!-- 中心孔 (Center) 與外圍 4 孔 (Periphery, 距表面 1 cm) -->
+      <circle cx="165" cy="128" r="8" fill="var(--bg-primary)" stroke="var(--warning)" stroke-width="2.2"/>
+      <text x="165" y="112" text-anchor="middle" fill="var(--warning)" font-size="10" font-family="var(--font-mono)">Center (c)</text>
+
+      <circle cx="165" cy="52" r="7" fill="var(--bg-primary)" stroke="var(--success)" stroke-width="2"/>
+      <text x="165" y="40" text-anchor="middle" fill="var(--success)" font-size="9.5" font-family="var(--font-mono)">12h (1cm deep)</text>
+      <circle cx="241" cy="128" r="7" fill="var(--bg-primary)" stroke="var(--success)" stroke-width="2"/>
+      <circle cx="165" cy="204" r="7" fill="var(--bg-primary)" stroke="var(--success)" stroke-width="2"/>
+      <circle cx="89" cy="128" r="7" fill="var(--bg-primary)" stroke="var(--success)" stroke-width="2"/>
+
+      <!-- 右側計算公式與定義 -->
+      <rect x="285" y="42" width="195" height="172" rx="8" fill="var(--bg-secondary)" stroke="var(--border-strong)"/>
+      <text x="300" y="68" fill="var(--accent)" font-size="11" font-weight="600">AAPM Report 96 關鍵公式</text>
+      <text x="300" y="96" fill="var(--text-main)" font-size="10.5" font-family="var(--font-mono)">1. 100mm 鉛筆型游離腔積分</text>
+      <text x="300" y="114" fill="var(--text-muted)" font-size="10" font-family="var(--font-mono)">   CTDI₁₀₀ = (1 / N·T) ∫ D(z)dz</text>
+      <text x="300" y="142" fill="var(--warning)" font-size="10.5" font-family="var(--font-mono)">2. 加權 CTDIw</text>
+      <text x="300" y="160" fill="var(--text-main)" font-size="10" font-family="var(--font-mono)">   CTDIw = ⅓ CTDIc + ⅔ CTDIp</text>
+      <text x="300" y="188" fill="var(--success)" font-size="10.5" font-family="var(--font-mono)">3. 體積 CTDIvol 與 DLP</text>
+      <text x="300" y="204" fill="var(--text-main)" font-size="10" font-family="var(--font-mono)">   CTDIvol = CTDIw / Pitch</text>
+    `;
+    return this._svgShell('0 0 500 255', '', body);
+  },
+
+  plotTCPNTCP() {
+    const pad = { top: 28, right: 24, bottom: 44, left: 54 };
+    const w = 520;
+    const h = 265;
+    const plotW = w - pad.left - pad.right;
+    const plotH = h - pad.top - pad.bottom;
+
+    const xTicks = [0, 20, 40, 60, 80, 100].map((v) => ({ val: v, label: `${v}` }));
+    const yTicks = [0, 25, 50, 75, 100].map((v) => ({ val: v, label: `${v}%` }));
+    const { grid, xMap, yMap } = this._buildAxes(pad, plotW, plotH, '處方總劑量 Total Dose (Gy)', '反應機率 Probability (%)', xTicks, yTicks, [0, 100], [0, 105]);
+
+    const tcpFn = (d) => 100 / (1 + Math.exp(-(d - 50) / 5.5));
+    const ntcpFn = (d) => 100 / (1 + Math.exp(-(d - 75) / 5.5));
+
+    let body = grid;
+    body += `<path d="${this._samplePath(tcpFn, 0, 100, 160, xMap, yMap)}" fill="none" stroke="var(--success)" stroke-width="2.4"/>`;
+    body += `<path d="${this._samplePath(ntcpFn, 0, 100, 160, xMap, yMap)}" fill="none" stroke="var(--danger)" stroke-width="2.4"/>`;
+
+    // 治療視窗雙向箭頭
+    const yMid = yMap(50).toFixed(1);
+    const xTcp50 = xMap(50).toFixed(1);
+    const xNtcp50 = xMap(75).toFixed(1);
+    body += `<line x1="${xTcp50}" y1="${yMid}" x2="${xNtcp50}" y2="${yMid}" stroke="var(--accent)" stroke-width="1.6" marker-start="url(#mp-arrow-accent)" marker-end="url(#mp-arrow-accent)"/>`;
+    body += `<text x="${xMap(62.5)}" y="${Number(yMid) - 8}" text-anchor="middle" fill="var(--accent)" font-size="10.5" font-weight="600">治療視窗 (Therapeutic Window)</text>`;
+
+    body += `<text x="${xMap(36)}" y="${yMap(82)}" text-anchor="end" fill="var(--success)" font-size="11" font-weight="600">TCP (腫瘤控制率)</text>`;
+    body += `<text x="${xMap(80)}" y="${yMap(30)}" fill="var(--danger)" font-size="11" font-weight="600">NTCP (正常組織併發症)</text>`;
+
+    return this._svgShell(`0 0 ${w} ${h}`, '', body);
+  },
+
+  drawDicomRTFlow() {
+    const body = `
+      <!-- 1. CT / MR Sim -->
+      <rect x="20" y="36" width="105" height="62" rx="8" fill="var(--bg-secondary)" stroke="var(--border-strong)"/>
+      <text x="72" y="62" text-anchor="middle" fill="var(--text-main)" font-size="11" font-weight="600">CT / MR Sim</text>
+      <text x="72" y="80" text-anchor="middle" fill="var(--accent)" font-size="9.5" font-family="var(--font-mono)">DICOM Image</text>
+
+      <line x1="125" y1="67" x2="152" y2="67" stroke="var(--text-muted)" stroke-width="1.5" marker-end="url(#mp-arrow)"/>
+
+      <!-- 2. RT Struct -->
+      <rect x="155" y="36" width="115" height="62" rx="8" fill="var(--bg-secondary)" stroke="var(--accent)"/>
+      <text x="212" y="60" text-anchor="middle" fill="var(--accent)" font-size="11" font-weight="600">RT Structure Set</text>
+      <text x="212" y="78" text-anchor="middle" fill="var(--text-muted)" font-size="9.5">GTV / PTV / OAR ROI</text>
+
+      <line x1="270" y1="67" x2="297" y2="67" stroke="var(--text-muted)" stroke-width="1.5" marker-end="url(#mp-arrow)"/>
+
+      <!-- 3. TPS: RT Plan & RT Dose -->
+      <rect x="300" y="22" width="180" height="90" rx="8" fill="var(--accent-subtle)" stroke="var(--accent)" stroke-width="1.6"/>
+      <text x="390" y="42" text-anchor="middle" fill="var(--text-main)" font-size="11" font-weight="600">治療計劃系統 (TPS)</text>
+      <rect x="312" y="52" width="74" height="46" rx="6" fill="var(--bg-primary)" stroke="var(--warning)"/>
+      <text x="349" y="72" text-anchor="middle" fill="var(--warning)" font-size="10" font-weight="600" font-family="var(--font-mono)">RT Plan</text>
+      <text x="349" y="88" text-anchor="middle" fill="var(--text-muted)" font-size="8.5">Beams / MLC / MU</text>
+
+      <rect x="394" y="52" width="74" height="46" rx="6" fill="var(--bg-primary)" stroke="var(--success)"/>
+      <text x="431" y="72" text-anchor="middle" fill="var(--success)" font-size="10" font-weight="600" font-family="var(--font-mono)">RT Dose</text>
+      <text x="431" y="88" text-anchor="middle" fill="var(--text-muted)" font-size="8.5">3D Dose Grid / DVH</text>
+
+      <!-- 4. OIS & Linac / RT Treatment Record -->
+      <line x1="390" y1="112" x2="390" y2="148" stroke="var(--accent)" stroke-width="1.6" marker-end="url(#mp-arrow-accent)"/>
+      <rect x="155" y="150" width="325" height="54" rx="8" fill="var(--bg-secondary)" stroke="var(--border-strong)"/>
+      <text x="317" y="174" text-anchor="middle" fill="var(--text-main)" font-size="11" font-weight="600">腫瘤資訊系統 (OIS) & 直線加速器 (Linac / EPID)</text>
+      <text x="317" y="192" text-anchor="middle" fill="var(--text-muted)" font-size="9.5" font-family="var(--font-mono)">RT Image (DRR / CBCT) + RT Treatment Record</text>
+    `;
+    return this._svgShell('0 0 500 220', '', body);
   }
 };
