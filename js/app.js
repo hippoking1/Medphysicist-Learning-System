@@ -2,46 +2,64 @@
  * 醫學物理師考照自學系統 - 各頁面控制器與互動邏輯 (js/app.js)
  */
 
+let lastDashboardData = null;
+let lastExamRadarRates = null;
+
+/**
+ * 主題切換時即時重繪畫面上的 Canvas 圖表
+ */
+function redrawActiveCharts() {
+  if (currentRouteHash === 'dashboard' && lastDashboardData) {
+    Charts.drawDonut('canvas-progress-donut', lastDashboardData.overallProgressPercent);
+    Charts.drawLine('canvas-study-line', lastDashboardData.weeklyDailyMinutes);
+  } else if (currentRouteHash === 'exam' && lastExamRadarRates) {
+    const resultView = document.getElementById('exam-result-view');
+    if (resultView && resultView.style.display !== 'none') {
+      Charts.drawRadar('canvas-exam-radar', lastExamRadarRates);
+    }
+  }
+}
+
+/**
+ * 共用輔助：將任一題目一鍵轉存為 SM-2 知識卡片 (消除重複邏輯)
+ */
+async function convertQuestionToFlashcard(q) {
+  const front = `${q.questionText}\n\n(選項參考：A. ${q.optionA} / B. ${q.optionB} / C. ${q.optionC} / D. ${q.optionD})`;
+  const back = `正確答案：${q.correctAnswer}\n\n${q.explanation || '無詳細解析'}${q.sourceRef ? `\n\n參考依據：${q.sourceRef}` : ''}`;
+  await DB.addManualReviewCard(q.moduleId || 'M1', q.unitId || '', front, back);
+  showToast('已將題目與詳解轉入 SM-2 知識卡佇列', 'success');
+}
+
 // ==========================================
 // 1. 儀表板頁面 (Dashboard)
 // ==========================================
 async function loadDashboardPage() {
-  const dashProgressPercent = document.getElementById('dash-progress-percent');
-  const dashCompletedUnits = document.getElementById('dash-completed-units');
-  const dashTotalUnits = document.getElementById('dash-total-units');
-  const dashHours = document.getElementById('dash-hours');
-  const dashDailyGoal = document.getElementById('dash-daily-goal');
-  const dashStreak = document.getElementById('dash-streak');
-  const dashStreakSub = document.getElementById('dash-streak-sub');
-  const dashDueCards = document.getElementById('dash-due-cards');
-  const btnDueCount = document.getElementById('btn-due-count');
-  const dashCountdown = document.getElementById('dash-countdown');
-  const dashModuleList = document.getElementById('dash-module-list');
-
   const data = await DB.getDashboardData();
   if (currentRouteHash !== 'dashboard') return;
+  lastDashboardData = data;
 
-  if (dashProgressPercent) dashProgressPercent.innerText = data.overallProgressPercent;
-  if (dashCompletedUnits) dashCompletedUnits.innerText = data.completedUnits;
-  if (dashTotalUnits) dashTotalUnits.innerText = data.totalUnits;
-  if (dashHours) dashHours.innerText = data.totalHours.toFixed(1);
-  if (dashDailyGoal) dashDailyGoal.innerText = data.dailyGoalMinutes;
-  if (dashStreak) dashStreak.innerText = data.streak;
-  if (dashDueCards) dashDueCards.innerText = data.dueReviewCardsCount;
-  if (btnDueCount) btnDueCount.innerText = data.dueReviewCardsCount;
-  if (dashCountdown) dashCountdown.innerText = data.daysRemaining;
+  const setText = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.innerText = val;
+  };
 
-  if (dashStreakSub) {
-    dashStreakSub.innerText = data.streak > 0
-      ? `太棒了！已連續學習 ${data.streak} 天`
-      : '今天還沒開始學習喔！';
-  }
+  setText('dash-progress-percent', data.overallProgressPercent);
+  setText('dash-completed-units', data.completedUnits);
+  setText('dash-total-units', data.totalUnits);
+  setText('dash-hours', data.totalHours.toFixed(1));
+  setText('dash-today-mins', data.todayMinutes || 0);
+  setText('dash-daily-goal', data.dailyGoalMinutes);
+  setText('dash-streak', data.streak);
+  setText('dash-streak-sub', `近 7 日累計 ${data.weeklyTotalMinutes || 0} min`);
+  setText('dash-due-cards', data.dueReviewCardsCount);
+  setText('dash-total-cards', data.totalReviewCardsCount || 0);
+  setText('btn-due-count', data.dueReviewCardsCount);
+  setText('dash-countdown', data.daysRemaining);
 
-  // 繪製圖表
   Charts.drawDonut('canvas-progress-donut', data.overallProgressPercent);
   Charts.drawLine('canvas-study-line', data.weeklyDailyMinutes);
 
-  // 動態渲染各模組進度條
+  const dashModuleList = document.getElementById('dash-module-list');
   if (dashModuleList) {
     dashModuleList.innerHTML = '';
     for (const mId in data.moduleProgress) {
@@ -49,14 +67,14 @@ async function loadDashboardPage() {
       const modRow = document.createElement('div');
       modRow.style.display = 'flex';
       modRow.style.flexDirection = 'column';
-      modRow.style.gap = '0.25rem';
+      modRow.style.gap = '4px';
 
       modRow.innerHTML = `
-        <div style="display: flex; justify-content: space-between; font-size: 0.85rem;">
-          <span style="font-weight: 600;">[${mId}] ${mod.name}</span>
-          <span style="color: var(--text-muted); font-weight: 500;">${mod.completed} / ${mod.total} 單元 (${mod.percent}%)</span>
+        <div style="display: flex; justify-content: space-between; font-size: 13px;">
+          <span style="font-weight: 500;"><span class="mono-num" style="color: var(--text-muted);">${mId}</span> ${mod.name}</span>
+          <span class="mono-num" style="color: var(--text-muted); font-size: 12px;">${mod.completed}/${mod.total} (${mod.percent}%)</span>
         </div>
-        <div class="progress-bar-container" style="height: 6px;">
+        <div class="progress-bar-container">
           <div class="progress-bar-fill" style="width: ${mod.percent}%;"></div>
         </div>
       `;
@@ -64,10 +82,9 @@ async function loadDashboardPage() {
     }
   }
 
-  // 今日推薦單元
   try {
     const progressList = await DB.getProgress();
-    const recUnit = progressList.find(p => p.status === 'not_started' || p.status === 'in_progress');
+    const recUnit = progressList.find((p) => p.status === 'not_started' || p.status === 'in_progress');
     const recCardBody = document.getElementById('dash-rec-card-body');
     const recTitle = document.getElementById('dash-rec-title');
     const recLit = document.getElementById('dash-rec-lit');
@@ -77,7 +94,7 @@ async function loadDashboardPage() {
       if (recTitle) recTitle.innerText = `[${recUnit.moduleId}] ${recUnit.unitName}`;
       if (recLit) recLit.innerText = recUnit.literature;
       if (recDesc) {
-        recDesc.innerHTML = `此單元規劃在第 ${recUnit.plannedWeek} 週研讀，指定章節為「${recUnit.chapters}」，建議研讀 ${recUnit.estimatedMinutes} 分鐘。<b style="color: var(--secondary);">點擊此卡片可直接前往該單元之課綱。</b>`;
+        recDesc.innerHTML = `第 ${recUnit.plannedWeek} 週進度 · 範疇：${recUnit.chapters}（預估 ${recUnit.estimatedMinutes} 分鐘）。點擊前往該單元。`;
       }
       if (recCardBody) {
         recCardBody.classList.add('rec-card-clickable');
@@ -87,9 +104,9 @@ async function loadDashboardPage() {
         };
       }
     } else {
-      if (recTitle) recTitle.innerText = '🎉 恭喜！您已讀完所有單元';
-      if (recLit) recLit.innerText = '無';
-      if (recDesc) recDesc.innerText = '您已完成所有規定單元！建議進入練習題庫與口試模擬強化實戰力。';
+      if (recTitle) recTitle.innerText = '全部 37 單元已完成';
+      if (recLit) recLit.innerText = '—';
+      if (recDesc) recDesc.innerText = '課綱單元已全部標記完成，建議集中於模擬測驗、SM-2 記憶卡與口試模擬強化實戰。';
       if (recCardBody) {
         recCardBody.classList.remove('rec-card-clickable');
         recCardBody.onclick = null;
@@ -104,15 +121,13 @@ async function loadDashboardPage() {
 let currentSyllabusFilterMod = 'ALL';
 
 async function loadSyllabusPage() {
-  const container = document.getElementById('syllabus-list');
   const tabsContainer = document.getElementById('syllabus-module-tabs');
 
-  // 綁定模組切換 Tab
   if (tabsContainer) {
     const tabs = tabsContainer.querySelectorAll('.tab-btn');
-    tabs.forEach(tab => {
+    tabs.forEach((tab) => {
       tab.onclick = () => {
-        tabs.forEach(t => {
+        tabs.forEach((t) => {
           t.classList.remove('active', 'btn-primary');
           t.classList.add('btn-secondary');
         });
@@ -126,7 +141,6 @@ async function loadSyllabusPage() {
 
   await renderSyllabusList();
 
-  // 若有自 Dashboard 帶入的跳轉單元，進行平滑滾動與高亮
   if (window.pendingSyllabusScrollTarget) {
     const targetUnitId = window.pendingSyllabusScrollTarget;
     window.pendingSyllabusScrollTarget = null;
@@ -135,9 +149,9 @@ async function loadSyllabusPage() {
       if (el) {
         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
         el.classList.add('unit-highlight');
-        setTimeout(() => el.classList.remove('unit-highlight'), 4500);
+        setTimeout(() => el.classList.remove('unit-highlight'), 4000);
       }
-    }, 200);
+    }, 180);
   }
 }
 
@@ -148,84 +162,137 @@ async function renderSyllabusList() {
   const progressList = await DB.getProgress();
   if (currentRouteHash !== 'syllabus') return;
 
-  const filtered = currentSyllabusFilterMod === 'ALL'
-    ? progressList
-    : progressList.filter(u => u.moduleId === currentSyllabusFilterMod);
+  const filtered =
+    currentSyllabusFilterMod === 'ALL'
+      ? progressList
+      : progressList.filter((u) => u.moduleId === currentSyllabusFilterMod);
 
   container.innerHTML = '';
 
   if (filtered.length === 0) {
-    container.innerHTML = '<div class="glass-card" style="text-align: center; color: var(--text-dark); padding: 3rem;">此模組目前無單元資料。</div>';
+    container.innerHTML =
+      '<div class="surface-card" style="text-align: center; color: var(--text-dark); padding: 32px;">此模組目前無單元資料</div>';
     return;
   }
 
   const statusMap = {
-    'not_started': { label: '未開始', class: 'badge-todo' },
-    'in_progress': { label: '進行中', class: 'badge-progress' },
-    'completed': { label: '已完成', class: 'badge-completed' },
-    'review': { label: '需複習', class: 'badge-review' }
+    not_started: { label: '未開始', class: 'badge-todo' },
+    in_progress: { label: '進行中', class: 'badge-progress' },
+    completed: { label: '已完成', class: 'badge-completed' },
+    review: { label: '需複習', class: 'badge-review' }
   };
 
-  filtered.forEach(unit => {
+  filtered.forEach((unit) => {
     const card = document.createElement('div');
-    card.className = 'glass-card';
+    card.className = 'surface-card unit-card';
     card.id = `unit-card-${unit.unitId}`;
-    card.style.padding = '1.25rem 1.5rem';
 
-    const st = statusMap[unit.status] || statusMap['not_started'];
+    const st = statusMap[unit.status] || statusMap.not_started;
+    const hasDiagram = typeof Diagrams !== 'undefined' && Diagrams.UNIT_DIAGRAMS[unit.unitId];
 
     card.innerHTML = `
-      <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap;">
-        <div style="flex: 1; min-width: 250px;">
-          <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.35rem;">
+      <div class="unit-card-row">
+        <div class="unit-card-info">
+          <div class="unit-meta-row">
             <span class="badge ${st.class}">${st.label}</span>
-            <span style="font-size: 0.8rem; color: var(--text-muted); font-weight: 600;">[${unit.unitId}] ${unit.moduleName}</span>
-            <span style="font-size: 0.75rem; color: var(--text-dark);">第 ${unit.plannedWeek} 週</span>
+            <span class="mono-num" style="font-size: 12px; color: var(--text-muted); font-weight: 500;">${unit.unitId}</span>
+            <span style="font-size: 12px; color: var(--text-muted);">${unit.moduleName}</span>
+            <span class="mono-num" style="font-size: 12px; color: var(--text-dark);">W${unit.plannedWeek} · 累計 ${unit.totalMinutes || 0} min</span>
           </div>
-          <h3 style="font-size: 1.15rem; font-weight: 700; color: var(--text-main); margin-bottom: 0.4rem;">${unit.unitName}</h3>
-          <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.25rem;">
-            <span style="color: var(--secondary); font-weight: 600;">指定文獻：</span>${unit.literature}
+          <h3 style="font-size: 16px; font-weight: 600; color: var(--text-main); margin-bottom: 6px;">${unit.unitName}</h3>
+          <div style="font-size: 12.5px; color: var(--text-muted); margin-bottom: 4px;">
+            <span style="color: var(--accent); font-weight: 500;">文獻：</span>${unit.literature}
           </div>
-          <div style="font-size: 0.8rem; color: var(--text-dark);">
-            <span style="font-weight: 600;">章節範疇：</span>${unit.chapters}
+          <div style="font-size: 12.5px; color: var(--text-dark);">
+            <span>範疇：</span>${unit.chapters}
           </div>
-          ${unit.notes ? `<div style="margin-top: 0.5rem; font-size: 0.8rem; color: #a0a5c1; background: rgba(0,0,0,0.25); padding: 0.5rem 0.75rem; border-radius: 6px; border-left: 3px solid var(--primary);"><span style="font-weight: 600; color: var(--primary);">研讀筆記：</span>${unit.notes}</div>` : ''}
+          ${unit.notes ? `<div class="unit-notes-box"><strong>筆記：</strong>${unit.notes}</div>` : ''}
         </div>
 
-        <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
-          <button class="btn btn-secondary" onclick="openNotebookLMModal('${unit.unitId}')" title="產生 NotebookLM AI 提示詞" style="padding: 0.5rem 0.75rem; font-size: 0.8rem;">
-            <span class="material-icons-round" style="font-size: 1rem; color: var(--secondary);">auto_awesome</span>
+        <div class="unit-actions">
+          ${hasDiagram ? `
+            <button class="btn btn-secondary btn-sm btn-unit-diagram" title="檢視標準醫學物理圖解">
+              <span class="material-icons-round" style="color: var(--accent);">insights</span>
+              <span>標準圖解</span>
+            </button>
+          ` : ''}
+          <button class="btn btn-secondary btn-sm btn-unit-nlm" title="產生 NotebookLM 提示詞">
+            <span class="material-icons-round">auto_awesome</span>
             <span>NotebookLM</span>
           </button>
-          <button class="btn btn-secondary" onclick="openUnitQuizModal('${unit.unitId}', '${unit.moduleId}', '${unit.topicId}')" title="單元隨堂測驗" style="padding: 0.5rem 0.75rem; font-size: 0.8rem;">
-            <span class="material-icons-round" style="font-size: 1rem; color: var(--info);">quiz</span>
-            <span>隨堂測驗</span>
+          <button class="btn btn-secondary btn-sm btn-unit-quiz" title="單元隨堂測驗">
+            <span class="material-icons-round">quiz</span>
+            <span>測驗</span>
           </button>
-          <button class="btn btn-secondary" onclick="openAICardModal('${unit.moduleId}', '${unit.unitId}')" title="AI 產生複習卡" style="padding: 0.5rem 0.75rem; font-size: 0.8rem;">
-            <span class="material-icons-round" style="font-size: 1rem; color: var(--warning);">bolt</span>
+          <button class="btn btn-secondary btn-sm btn-unit-aicard" title="AI 提煉複習卡">
+            <span class="material-icons-round">style</span>
             <span>生卡</span>
           </button>
-          <button class="btn btn-secondary" onclick="openProgressModal('${unit.unitId}', '${unit.status}', '${(unit.notes || '').replace(/'/g, "\\'")}')" title="更新筆記與進度" style="padding: 0.5rem 0.75rem; font-size: 0.8rem;">
-            <span class="material-icons-round" style="font-size: 1rem;">edit_note</span>
+          <button class="btn btn-secondary btn-sm btn-unit-progress" title="更新進度與筆記">
+            <span class="material-icons-round">edit_note</span>
             <span>進度</span>
           </button>
-          <button class="btn btn-primary" onclick="StudyTimer.start('${unit.unitId}', '${unit.unitName.replace(/'/g, "\\'")}')" style="padding: 0.5rem 0.75rem; font-size: 0.8rem;">
-            <span class="material-icons-round" style="font-size: 1rem;">timer</span>
-            <span>計時研讀</span>
+          <button class="btn btn-primary btn-sm btn-unit-timer" title="啟動學習計時器">
+            <span class="material-icons-round">timer</span>
+            <span>計時</span>
           </button>
         </div>
       </div>
     `;
+
+    if (hasDiagram) {
+      card.querySelector('.btn-unit-diagram').onclick = () => openDiagramModal(unit.unitId, unit.unitName);
+    }
+    card.querySelector('.btn-unit-nlm').onclick = () => openNotebookLMModal(unit.unitId);
+    card.querySelector('.btn-unit-quiz').onclick = () => openUnitQuizModal(unit.unitId, unit.moduleId, unit.topicId);
+    card.querySelector('.btn-unit-aicard').onclick = () => openAICardModal(unit.moduleId, unit.unitId);
+    card.querySelector('.btn-unit-progress').onclick = () => openProgressModal(unit.unitId, unit.status, unit.notes);
+    card.querySelector('.btn-unit-timer').onclick = () => StudyTimer.start(unit.unitId, unit.unitName);
+
     container.appendChild(card);
   });
 }
 
-// 彈窗操作：更新進度 Modal (原生 <dialog>)
-function openProgressModal(unitId, status, notes) {
+// 標準物理圖解彈窗
+function openDiagramModal(unitId, unitName) {
+  const dialog = document.getElementById('diagram-modal');
+  const titleEl = document.getElementById('diagram-modal-title');
+  const bodyEl = document.getElementById('diagram-modal-body');
+  if (!dialog || !bodyEl) return;
+
+  const list = (typeof Diagrams !== 'undefined' && Diagrams.UNIT_DIAGRAMS[unitId]) || [];
+  if (titleEl) titleEl.innerText = `[${unitId}] ${unitName} — 標準物理圖解`;
+
+  bodyEl.innerHTML = '';
+  list.forEach((item) => {
+    const block = document.createElement('div');
+    block.className = 'mp-diagram-block';
+    block.innerHTML = `
+      <div class="mp-diagram-title">${item.title}</div>
+      <div class="mp-diagram">${Diagrams.renderSpec(item.spec)}</div>
+      <div class="mp-diagram-caption">${item.caption}</div>
+    `;
+    bodyEl.appendChild(block);
+  });
+
+  if (dialog.showModal) dialog.showModal();
+}
+
+function closeDiagramModal() {
+  const dialog = document.getElementById('diagram-modal');
+  if (dialog && dialog.close) dialog.close();
+}
+
+// 彈窗操作：更新進度 Modal (同時支援手動修改與 StudyTimer 結束自動帶入時數)
+function openProgressModal(unitId, status, notes, prefillMinutes = 0, onSavedCallback = null) {
   const dialog = document.getElementById('progress-modal');
+  const titleEl = document.getElementById('progress-modal-title');
+  if (titleEl) {
+    titleEl.innerText = prefillMinutes > 0 ? `結束計時 — 儲存 [${unitId}] 學習紀錄` : `更新學習進度 — ${unitId}`;
+  }
   document.getElementById('modal-unit-id').value = unitId;
   document.getElementById('modal-status').value = status || 'not_started';
-  document.getElementById('modal-add-minutes').value = '0';
+  document.getElementById('modal-add-minutes').value = String(prefillMinutes || 0);
   document.getElementById('modal-notes').value = notes || '';
 
   const btnSubmit = document.getElementById('btn-submit-modal');
@@ -236,9 +303,11 @@ function openProgressModal(unitId, status, notes) {
       const m = document.getElementById('modal-add-minutes').value;
       const n = document.getElementById('modal-notes').value;
       await DB.updateProgress(unitId, s, m, n);
-      showToast('單元進度已更新！', 'success');
+      showToast('單元進度已儲存', 'success');
       closeProgressModal();
-      renderSyllabusList();
+      if (typeof onSavedCallback === 'function') onSavedCallback();
+      if (currentRouteHash === 'syllabus') renderSyllabusList();
+      else if (currentRouteHash === 'dashboard') loadDashboardPage();
     } catch (e) {
       showToast('更新失敗：' + e.message, 'error');
     } finally {
@@ -265,14 +334,14 @@ function openAICardModal(moduleId, unitId) {
   btn.onclick = async () => {
     const text = document.getElementById('ai-card-text').value;
     if (!text || text.trim() === '') {
-      showToast('請貼上文獻重點內容！', 'warning');
+      showToast('請貼上文獻重點內容', 'warning');
       return;
     }
     btn.disabled = true;
     try {
-      showToast('Gemini 正在提煉雙面複習卡片...', 'info');
+      showToast('Gemini 正在提煉雙面複習卡片', 'info');
       const cards = await GeminiService.generateFlashcardsAI(moduleId, unitId, text);
-      showToast(`成功生成 ${cards.length} 張知識卡片！`, 'success');
+      showToast(`已生成 ${cards.length} 張知識卡片`, 'success');
       closeAICardModal();
     } catch (e) {
       showToast('生成失敗：' + e.message, 'error');
@@ -293,7 +362,7 @@ function closeAICardModal() {
 async function openNotebookLMModal(unitId) {
   const dialog = document.getElementById('notebooklm-modal');
   const syllabus = await DB.getSyllabus();
-  const unit = syllabus.find(u => u.unitId === unitId);
+  const unit = syllabus.find((u) => u.unitId === unitId);
   if (!unit) return;
 
   const titleEl = document.getElementById('notebooklm-modal-title');
@@ -330,69 +399,79 @@ function closeNotebookLMModal() {
 function copyNotebookLMPrompt() {
   const promptEl = document.getElementById('notebooklm-prompt-text');
   if (promptEl) {
-    navigator.clipboard.writeText(promptEl.value).then(() => {
-      showToast('提示詞已複製至剪貼簿！', 'success');
-    }).catch(() => {
-      promptEl.select();
-      document.execCommand('copy');
-      showToast('提示詞已複製！', 'success');
-    });
+    navigator.clipboard
+      .writeText(promptEl.value)
+      .then(() => showToast('提示詞已複製至剪貼簿', 'success'))
+      .catch(() => {
+        promptEl.select();
+        document.execCommand('copy');
+        showToast('提示詞已複製', 'success');
+      });
   }
 }
 
-// 彈窗操作：隨堂測驗 Modal
+// 彈窗操作：隨堂測驗 Modal (附一鍵轉閃卡)
 async function openUnitQuizModal(unitId, moduleId, topicId) {
   const dialog = document.getElementById('unit-quiz-modal');
   const body = document.getElementById('quiz-modal-body');
   const title = document.getElementById('quiz-modal-title');
   if (title) title.innerText = `隨堂測驗 — ${unitId}`;
 
-  body.innerHTML = '<div class="loader-container"><div class="spinner"></div><div class="loading-text">載入/生成隨堂題目中...</div></div>';
+  body.innerHTML = '<div class="loader-container"><div class="spinner"></div><div class="loading-text">載入或生成題目中</div></div>';
   if (dialog && dialog.showModal) dialog.showModal();
 
   try {
     const questions = await DB.getUnitQuiz(unitId, moduleId, topicId);
     if (!questions || questions.length === 0) {
-      body.innerHTML = '<div style="text-align: center; color: var(--text-dark); padding: 2rem;">此單元目前無可用題目，請先至題庫生成。</div>';
+      body.innerHTML = '<div style="text-align: center; color: var(--text-dark); padding: 24px;">此單元目前無可用題目，請先至 AI 練習題庫生成。</div>';
       return;
     }
 
     body.innerHTML = '';
     questions.forEach((q, idx) => {
       const qDiv = document.createElement('div');
-      qDiv.style.marginBottom = '1.5rem';
-      qDiv.style.padding = '1rem';
-      qDiv.style.background = 'rgba(255,255,255,0.02)';
-      qDiv.style.borderRadius = '10px';
-      qDiv.style.border = '1px solid var(--border-color)';
+      qDiv.className = 'sub-card';
+      qDiv.style.marginBottom = '16px';
 
       qDiv.innerHTML = `
-        <div style="font-weight: 700; color: var(--secondary); margin-bottom: 0.5rem;">第 ${idx + 1} 題</div>
-        <div class="markdown-view" style="font-size: 0.95rem; margin-bottom: 1rem;">${q.questionText}</div>
+        <div style="font-weight: 600; color: var(--accent); margin-bottom: 8px;" class="mono-num">第 ${idx + 1} 題</div>
+        <div class="markdown-view" style="font-size: 14px; margin-bottom: 12px;">${q.questionText}</div>
         <div class="quiz-options" data-qid="${q.questionId}">
-          ${['A', 'B', 'C', 'D'].map(opt => `
+          ${['A', 'B', 'C', 'D']
+            .map(
+              (opt) => `
             <div class="quiz-option" data-opt="${opt}" onclick="selectQuizOption(this)">
               <div class="option-letter">${opt}</div>
               <div>${q['option' + opt]}</div>
             </div>
-          `).join('')}
+          `
+            )
+            .join('')}
         </div>
-        <div class="quiz-explanation" style="display: none; margin-top: 0.75rem; padding: 0.75rem; background: rgba(0,0,0,0.3); border-radius: 8px; font-size: 0.85rem; border-left: 3px solid var(--info);">
-          <div style="font-weight: 700; color: var(--success); margin-bottom: 0.25rem;">正確答案：${q.correctAnswer}</div>
-          <div class="markdown-view" style="color: var(--text-muted);">${q.explanation || '無詳細解析'}</div>
+        <div class="quiz-explanation sub-card" style="display: none; margin-top: 10px; border-left: 2px solid var(--accent);">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <span style="font-weight: 600; color: var(--success);">正確答案：${q.correctAnswer}</span>
+            <button class="btn btn-secondary btn-sm btn-quiz-to-card">
+              <span class="material-icons-round">style</span>
+              <span>轉為閃卡</span>
+            </button>
+          </div>
+          <div class="markdown-view" style="color: var(--text-muted); font-size: 13px;">${q.explanation || '無詳細解析'}</div>
         </div>
       `;
+
+      qDiv.querySelector('.btn-quiz-to-card').onclick = () => convertQuestionToFlashcard(q);
       body.appendChild(qDiv);
     });
 
-    renderMath();
+    renderMath(body);
 
     const btnSubmit = document.getElementById('btn-submit-unit-quiz');
     if (btnSubmit) {
       btnSubmit.style.display = 'inline-flex';
       btnSubmit.onclick = () => {
         let correctCount = 0;
-        questions.forEach(q => {
+        questions.forEach((q) => {
           const optContainer = body.querySelector(`.quiz-options[data-qid="${q.questionId}"]`);
           if (!optContainer) return;
           const selected = optContainer.querySelector('.quiz-option.selected');
@@ -400,28 +479,23 @@ async function openUnitQuizModal(unitId, moduleId, topicId) {
           const isCorrect = chosenOpt && chosenOpt.toUpperCase() === q.correctAnswer.toUpperCase();
           if (isCorrect) correctCount++;
 
-          // 標示顏色
-          optContainer.querySelectorAll('.quiz-option').forEach(op => {
+          optContainer.querySelectorAll('.quiz-option').forEach((op) => {
             const o = op.getAttribute('data-opt');
-            if (o.toUpperCase() === q.correctAnswer.toUpperCase()) {
-              op.classList.add('correct');
-            } else if (op === selected) {
-              op.classList.add('wrong');
-            }
+            if (o.toUpperCase() === q.correctAnswer.toUpperCase()) op.classList.add('correct');
+            else if (op === selected) op.classList.add('wrong');
           });
 
-          // 顯示解析
           const exp = optContainer.nextElementSibling;
           if (exp) exp.style.display = 'block';
         });
 
         btnSubmit.style.display = 'none';
-        showToast(`測驗完成！答對 ${correctCount} / ${questions.length} 題`, correctCount === questions.length ? 'success' : 'info');
-        renderMath();
+        showToast(`測驗完成：答對 ${correctCount} / ${questions.length} 題`, correctCount === questions.length ? 'success' : 'info');
+        renderMath(body);
       };
     }
   } catch (e) {
-    body.innerHTML = `<div style="color: var(--danger); text-align: center; padding: 2rem;">載入失敗: ${e.message}</div>`;
+    body.innerHTML = `<div style="color: var(--danger); text-align: center; padding: 24px;">載入失敗: ${e.message}</div>`;
   }
 }
 
@@ -433,17 +507,18 @@ function closeUnitQuizModal() {
 function selectQuizOption(el) {
   const parent = el.closest('.quiz-options');
   if (!parent) return;
-  parent.querySelectorAll('.quiz-option').forEach(o => o.classList.remove('selected'));
+  parent.querySelectorAll('.quiz-option').forEach((o) => o.classList.remove('selected'));
   el.classList.add('selected');
 }
 
 // ==========================================
-// 3. AI 練習題庫頁面 (Practice)
+// 3. AI 練習題庫頁面 (Practice: 預設互動盲測模式 + 展開詳解模式)
 // ==========================================
+let practiceViewMode = 'quiz'; // 'quiz' | 'review'
+
 async function loadPracticePage() {
   const syllabus = await DB.getSyllabus();
 
-  // 模組與主題、單元選單連動
   bindModuleTopicSelectors('practice-mod-select', 'practice-topic-select', syllabus);
   bindModuleUnitSelectors('practice-mod-select', 'practice-topic-select', 'practice-unit-select', syllabus, {
     allUnitOption: '全部小單元 (全主題出題)',
@@ -454,6 +529,27 @@ async function loadPracticePage() {
   const topicSelect = document.getElementById('practice-topic-select');
   if (modSelect) modSelect.addEventListener('change', () => loadPracticeQuestionsList());
   if (topicSelect) topicSelect.addEventListener('change', () => loadPracticeQuestionsList());
+
+  const btnToggleMode = document.getElementById('btn-toggle-practice-mode');
+  const modeLabel = document.getElementById('practice-mode-label');
+  if (btnToggleMode) {
+    const syncModeLabel = () => {
+      const icon = btnToggleMode.querySelector('.material-icons-round');
+      if (practiceViewMode === 'quiz') {
+        if (modeLabel) modeLabel.innerText = '互動盲測模式';
+        if (icon) icon.innerText = 'visibility_off';
+      } else {
+        if (modeLabel) modeLabel.innerText = '展開詳解模式';
+        if (icon) icon.innerText = 'visibility';
+      }
+    };
+    syncModeLabel();
+    btnToggleMode.onclick = () => {
+      practiceViewMode = practiceViewMode === 'quiz' ? 'review' : 'quiz';
+      syncModeLabel();
+      loadPracticeQuestionsList();
+    };
+  }
 
   const btnGen = document.getElementById('btn-generate-qs');
   if (btnGen) {
@@ -466,9 +562,9 @@ async function loadPracticePage() {
 
       btnGen.disabled = true;
       try {
-        showToast('Gemini AI 正在研讀文獻並出題中...', 'info');
+        showToast('Gemini AI 正在生成題目', 'info');
         const qs = await GeminiService.generateAIQuestions(mId, tId, cnt, diff, uId);
-        showToast(`成功生成 ${qs.length} 道高水準練習題！`, 'success');
+        showToast(`成功生成 ${qs.length} 道題目`, 'success');
         loadPracticeQuestionsList();
       } catch (e) {
         showToast('出題失敗：' + e.message, 'error');
@@ -478,13 +574,11 @@ async function loadPracticePage() {
     };
   }
 
-  // 篩選器切換
   const filterSelect = document.getElementById('filter-verified-select');
   if (filterSelect) {
     filterSelect.onchange = () => loadPracticeQuestionsList();
   }
 
-  // 載入題庫清單
   loadPracticeQuestionsList();
 }
 
@@ -497,75 +591,112 @@ async function loadPracticeQuestionsList() {
   const tId = document.getElementById('practice-topic-select')?.value;
   const filterVal = document.getElementById('filter-verified-select')?.value || 'all';
 
-  container.innerHTML = '<div class="loader-container"><div class="spinner"></div><div class="loading-text">載入題庫中...</div></div>';
+  container.innerHTML = '<div class="loader-container"><div class="spinner"></div><div class="loading-text">載入題庫中</div></div>';
 
   try {
     let questions = await DB.getQuestions(mId, tId);
     if (currentRouteHash !== 'practice') return;
 
-    if (filterVal === 'unverified') questions = questions.filter(q => !q.verified);
-    else if (filterVal === 'verified') questions = questions.filter(q => q.verified);
+    if (filterVal === 'unverified') questions = questions.filter((q) => !q.verified);
+    else if (filterVal === 'verified') questions = questions.filter((q) => q.verified);
 
     if (countSpan) countSpan.innerText = questions.length;
     container.innerHTML = '';
 
     if (questions.length === 0) {
-      container.innerHTML = '<div style="text-align: center; color: var(--text-dark); padding: 3rem;">此分類下目前無題目。點選左側「使用 Gemini 出題」自動產生題目！</div>';
+      container.innerHTML = '<div style="text-align: center; color: var(--text-dark); padding: 32px;">此分類目前無題目，可使用左側 Gemini 出題或手動新增。</div>';
       return;
     }
 
     questions.forEach((q, idx) => {
       const card = document.createElement('div');
-      card.className = 'glass-card';
-      card.style.background = 'rgba(255, 255, 255, 0.015)';
-      card.style.border = '1px solid var(--border-color)';
-      card.style.padding = '1.25rem';
+      card.className = 'sub-card';
+
+      const isReviewMode = practiceViewMode === 'review';
 
       card.innerHTML = `
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 0.5rem;">
-          <div style="display: flex; gap: 0.5rem; align-items: center;">
-            <span class="badge ${q.verified ? 'badge-completed' : 'badge-review'}">${q.verified ? '已核可' : 'AI 待審查'}</span>
-            <span style="font-weight: 700; color: var(--secondary);">第 ${idx + 1} 題</span>
-            <span style="font-size: 0.75rem; color: var(--text-dark);">難度 ${q.difficulty} | ${q.sourceRef || q.moduleId}</span>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px; gap: 8px; flex-wrap: wrap;">
+          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+            <span class="badge ${q.verified ? 'badge-completed' : 'badge-review'}">${q.verified ? '已核可' : '待審查'}</span>
+            <span class="mono-num" style="font-weight: 600; color: var(--accent);">第 ${idx + 1} 題</span>
+            <span class="mono-num" style="font-size: 12px; color: var(--text-dark);">難度 ${q.difficulty} · ${q.sourceRef || q.moduleId}</span>
           </div>
-          <div style="display: flex; gap: 0.5rem;">
+          <div style="display: flex; gap: 6px;">
             ${!q.verified ? `
-              <button class="btn btn-secondary" onclick="verifyPracticeQuestion('${q.questionId}')" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;">
-                <span class="material-icons-round" style="font-size: 0.9rem; color: var(--success);">check</span> 核可
+              <button class="btn btn-secondary btn-sm btn-verify-q">
+                <span class="material-icons-round" style="color: var(--success);">check</span>
+                <span>核可</span>
               </button>
             ` : ''}
-            <button class="btn btn-danger" onclick="deletePracticeQuestion('${q.questionId}')" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;">
-              <span class="material-icons-round" style="font-size: 0.9rem;">delete</span>
+            <button class="btn btn-secondary btn-sm btn-q-to-card" title="轉為 SM-2 知識卡">
+              <span class="material-icons-round">style</span>
+              <span>轉閃卡</span>
+            </button>
+            <button class="btn btn-danger btn-sm btn-delete-q" title="刪除題目">
+              <span class="material-icons-round">delete</span>
             </button>
           </div>
         </div>
 
-        <div class="markdown-view" style="font-size: 1rem; font-weight: 500; margin-bottom: 1rem;">${q.questionText}</div>
+        <div class="markdown-view" style="font-size: 14.5px; font-weight: 500; margin-bottom: 12px;">${q.questionText}</div>
 
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-bottom: 1rem;">
-          <div style="padding: 0.5rem 0.75rem; background: rgba(0,0,0,0.2); border-radius: 6px; font-size: 0.85rem; border-left: 2px solid var(--border-color);"><span style="font-weight: 700; color: var(--secondary);">A.</span> ${q.optionA}</div>
-          <div style="padding: 0.5rem 0.75rem; background: rgba(0,0,0,0.2); border-radius: 6px; font-size: 0.85rem; border-left: 2px solid var(--border-color);"><span style="font-weight: 700; color: var(--secondary);">B.</span> ${q.optionB}</div>
-          <div style="padding: 0.5rem 0.75rem; background: rgba(0,0,0,0.2); border-radius: 6px; font-size: 0.85rem; border-left: 2px solid var(--border-color);"><span style="font-weight: 700; color: var(--secondary);">C.</span> ${q.optionC}</div>
-          <div style="padding: 0.5rem 0.75rem; background: rgba(0,0,0,0.2); border-radius: 6px; font-size: 0.85rem; border-left: 2px solid var(--border-color);"><span style="font-weight: 700; color: var(--secondary);">D.</span> ${q.optionD}</div>
+        <div class="q-options-grid">
+          ${['A', 'B', 'C', 'D']
+            .map(
+              (opt) => `
+            <div class="quiz-option practice-opt ${isReviewMode && opt === q.correctAnswer ? 'correct' : ''}" data-opt="${opt}" style="padding: 8px 12px; font-size: 13.5px;">
+              <div class="option-letter">${opt}</div>
+              <div>${q['option' + opt]}</div>
+            </div>
+          `
+            )
+            .join('')}
         </div>
 
-        <div style="background: rgba(0, 242, 254, 0.03); border: 1px solid rgba(0, 242, 254, 0.15); border-radius: 8px; padding: 0.75rem; font-size: 0.85rem;">
-          <div style="font-weight: 700; color: var(--success); margin-bottom: 0.25rem;">正確解答：${q.correctAnswer}</div>
+        <div class="practice-exp-box" style="display: ${isReviewMode ? 'block' : 'none'}; margin-top: 12px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-left: 2px solid var(--accent); border-radius: 8px; padding: 12px; font-size: 13px;">
+          <div style="font-weight: 600; color: var(--success); margin-bottom: 4px;">正確解答：${q.correctAnswer}</div>
           <div class="markdown-view" style="color: var(--text-muted);">${q.explanation || '無詳細解析'}</div>
         </div>
       `;
+
+      // 互動盲測點擊判讀
+      const optEls = card.querySelectorAll('.practice-opt');
+      const expBox = card.querySelector('.practice-exp-box');
+      if (!isReviewMode) {
+        optEls.forEach((opEl) => {
+          opEl.onclick = () => {
+            if (card.dataset.answered === 'true') return;
+            card.dataset.answered = 'true';
+            const chosen = opEl.getAttribute('data-opt');
+            const correct = String(q.correctAnswer).toUpperCase();
+            optEls.forEach((item) => {
+              const code = item.getAttribute('data-opt').toUpperCase();
+              if (code === correct) item.classList.add('correct');
+              else if (item === opEl && chosen !== correct) item.classList.add('wrong');
+            });
+            if (expBox) expBox.style.display = 'block';
+            renderMath(expBox);
+          };
+        });
+      }
+
+      const btnVerify = card.querySelector('.btn-verify-q');
+      if (btnVerify) btnVerify.onclick = () => verifyPracticeQuestion(q.questionId);
+      card.querySelector('.btn-q-to-card').onclick = () => convertQuestionToFlashcard(q);
+      card.querySelector('.btn-delete-q').onclick = () => deletePracticeQuestion(q.questionId);
+
       container.appendChild(card);
     });
 
-    renderMath();
+    renderMath(container);
   } catch (e) {
-    container.innerHTML = `<div style="color: var(--danger); text-align: center; padding: 2rem;">載入失敗: ${e.message}</div>`;
+    container.innerHTML = `<div style="color: var(--danger); text-align: center; padding: 24px;">載入失敗: ${e.message}</div>`;
   }
 }
 
 async function verifyPracticeQuestion(qId) {
   await DB.verifyQuestion(qId);
-  showToast('題目已核可！', 'success');
+  showToast('題目已核可', 'success');
   loadPracticeQuestionsList();
 }
 
@@ -576,7 +707,6 @@ async function deletePracticeQuestion(qId) {
   loadPracticeQuestionsList();
 }
 
-// 手動新增題目 Modal
 async function openAddQuestionModal() {
   const dialog = document.getElementById('add-q-modal');
   const syllabus = await DB.getSyllabus();
@@ -606,14 +736,14 @@ async function openAddQuestionModal() {
       };
 
       if (!qObj.questionText || !qObj.optionA || !qObj.optionB) {
-        showToast('請完整填寫題目與選項！', 'warning');
+        showToast('請完整填寫題目與選項', 'warning');
         return;
       }
 
       btnSave.disabled = true;
       try {
         await DB.addManualQuestion(qObj);
-        showToast('題目已成功建立！', 'success');
+        showToast('題目已建立', 'success');
         closeAddQuestionModal();
         loadPracticeQuestionsList();
       } catch (e) {
@@ -635,7 +765,6 @@ function closeAddQuestionModal() {
 // ==========================================
 // 4. 模擬測驗中心 (Exam Center)
 // ==========================================
-let activeExam = null;
 let activeExamTimer = null;
 let activeExamQuestions = [];
 let activeUserAnswers = [];
@@ -646,7 +775,6 @@ async function loadExamPage() {
   const examModGroup = document.getElementById('exam-mod-group');
   const examModSelect = document.getElementById('exam-mod-select');
 
-  // 初始化模組下拉選單
   if (examModSelect) {
     examModSelect.innerHTML = '';
     for (const mId in MODULE_NAMES) {
@@ -670,7 +798,7 @@ async function loadExamPage() {
 
       btnStart.disabled = true;
       try {
-        showToast('正在組卷中...', 'info');
+        showToast('正在組卷中', 'info');
         const qs = await DB.generateExam(type, mId);
         startActiveExam(type, qs, mId);
       } catch (e) {
@@ -681,7 +809,6 @@ async function loadExamPage() {
     };
   }
 
-  // 載入歷史成績
   loadExamHistory();
 }
 
@@ -693,57 +820,61 @@ async function loadExamHistory() {
   tbody.innerHTML = '';
 
   if (results.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 2rem; color: var(--text-dark);">無測驗記錄</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 24px; color: var(--text-dark);">尚無測驗記錄</td></tr>';
     return;
   }
 
-  results.forEach(r => {
+  results.forEach((r) => {
     const tr = document.createElement('tr');
-    tr.style.borderBottom = '1px solid var(--border-color)';
-    const typeLabel = r.examType === 'full' ? '全範圍 (80題)' : '模組驗收';
+    tr.className = 'clickable-row';
+    const typeLabel = r.examType === 'full' ? '全範圍' : `模組 ${r.moduleId || ''}`;
     const minutes = Math.floor(r.timeSpent / 60);
     const secs = r.timeSpent % 60;
 
     tr.innerHTML = `
-      <td style="padding: 0.75rem 0.25rem;">${r.date}</td>
-      <td style="padding: 0.75rem 0.25rem;"><span class="badge ${r.examType === 'full' ? 'badge-progress' : 'badge-todo'}">${typeLabel}</span></td>
-      <td style="padding: 0.75rem 0.25rem;">${r.correctCount} / ${r.totalQuestions}</td>
-      <td style="padding: 0.75rem 0.25rem; font-weight: 700; color: ${r.score >= 60 ? 'var(--success)' : 'var(--danger)'};">${r.score} 分</td>
-      <td style="padding: 0.75rem 0.25rem; font-family: monospace;">${minutes}分${secs}秒</td>
+      <td class="mono-num">${r.date}</td>
+      <td><span class="badge ${r.examType === 'full' ? 'badge-progress' : 'badge-todo'}">${typeLabel}</span></td>
+      <td class="mono-num">${r.correctCount} / ${r.totalQuestions}</td>
+      <td class="mono-num" style="font-weight: 600; color: ${r.score >= 60 ? 'var(--success)' : 'var(--danger)'};">${r.score} 分</td>
+      <td class="mono-num">${minutes}m ${String(secs).padStart(2, '0')}s</td>
     `;
+    tr.onclick = () => renderExamResultView(r);
     tbody.appendChild(tr);
   });
 }
 
 function startActiveExam(type, questions, moduleId) {
+  if (activeExamTimer) activeExamTimer.stop();
   activeExamQuestions = questions;
-  activeUserAnswers = questions.map(q => ({ questionId: q.questionId, selectedOption: null }));
+  activeUserAnswers = questions.map((q) => ({ questionId: q.questionId, selectedOption: null }));
   activeExamIndex = 0;
 
   document.getElementById('exam-setup-view').style.display = 'none';
   document.getElementById('exam-active-view').style.display = 'grid';
   document.getElementById('exam-result-view').style.display = 'none';
 
-  // 測驗總時長：全範圍 60 分鐘 (3600秒)，單模組 30 分鐘 (1800秒)
   const duration = type === 'full' ? 3600 : 1800;
 
-  activeExamTimer = new ExamTimer(duration, (remaining) => {
-    const mins = Math.floor(remaining / 60);
-    const secs = remaining % 60;
-    const timerEl = document.getElementById('active-exam-timer');
-    if (timerEl) {
-      timerEl.innerText = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  activeExamTimer = new ExamTimer(
+    duration,
+    (remaining) => {
+      const mins = Math.floor(remaining / 60);
+      const secs = remaining % 60;
+      const timerEl = document.getElementById('active-exam-timer');
+      if (timerEl) {
+        timerEl.innerText = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+      }
+    },
+    () => {
+      showToast('測驗時間結束，自動交卷中', 'warning');
+      submitActiveExam(type, moduleId);
     }
-  }, () => {
-    showToast('測驗時間到！自動為您交卷...', 'warning');
-    submitActiveExam(type, moduleId);
-  });
+  );
 
   activeExamTimer.start();
   renderExamNavGrid();
   renderActiveExamQuestion(0);
 
-  // 綁定上一題、下一題、提前交卷
   document.getElementById('btn-exam-prev').onclick = () => {
     if (activeExamIndex > 0) renderActiveExamQuestion(activeExamIndex - 1);
   };
@@ -751,14 +882,9 @@ function startActiveExam(type, questions, moduleId) {
     if (activeExamIndex < activeExamQuestions.length - 1) renderActiveExamQuestion(activeExamIndex + 1);
   };
   document.getElementById('btn-submit-exam').onclick = () => {
-    const uncompleted = activeUserAnswers.filter(a => !a.selectedOption).length;
-    let msg = '確定要提早交卷嗎？';
-    if (uncompleted > 0) {
-      msg = `您尚有 ${uncompleted} 題未作答！確定要提前交卷嗎？`;
-    }
-    if (confirm(msg)) {
-      submitActiveExam(type, moduleId);
-    }
+    const uncompleted = activeUserAnswers.filter((a) => !a.selectedOption).length;
+    const msg = uncompleted > 0 ? `尚有 ${uncompleted} 題未作答，確定要交卷嗎？` : '確定要交卷評分嗎？';
+    if (confirm(msg)) submitActiveExam(type, moduleId);
   };
 }
 
@@ -769,26 +895,25 @@ function renderExamNavGrid() {
   if (!grid) return;
 
   grid.innerHTML = '';
-  const completedCount = activeUserAnswers.filter(a => !!a.selectedOption).length;
+  const completedCount = activeUserAnswers.filter((a) => !!a.selectedOption).length;
   if (completedSpan) completedSpan.innerText = completedCount;
   if (totalSpan) totalSpan.innerText = activeExamQuestions.length;
 
   activeExamQuestions.forEach((q, idx) => {
     const btn = document.createElement('button');
-    btn.className = 'btn btn-secondary';
-    btn.style.padding = '0.35rem 0.2rem';
-    btn.style.fontSize = '0.8rem';
-    btn.style.borderRadius = '6px';
+    btn.className = 'btn btn-secondary btn-sm mono-num';
+    btn.style.padding = '0';
     btn.style.minWidth = '0';
     btn.innerText = idx + 1;
 
     const isAnswered = !!activeUserAnswers[idx].selectedOption;
     if (idx === activeExamIndex) {
-      btn.style.borderColor = 'var(--secondary)';
-      btn.style.background = 'rgba(0, 242, 254, 0.2)';
+      btn.style.borderColor = 'var(--accent)';
+      btn.style.background = 'var(--accent-subtle)';
+      btn.style.color = 'var(--accent)';
     } else if (isAnswered) {
-      btn.style.borderColor = 'var(--primary)';
-      btn.style.background = 'rgba(138, 43, 226, 0.25)';
+      btn.style.borderColor = 'var(--border-strong)';
+      btn.style.background = 'var(--bg-raised)';
     }
 
     btn.onclick = () => renderActiveExamQuestion(idx);
@@ -803,19 +928,20 @@ function renderActiveExamQuestion(idx) {
 
   document.getElementById('active-q-index').innerText = idx + 1;
   document.getElementById('active-q-diff').innerText = q.difficulty;
-  document.getElementById('active-q-text').innerHTML = q.questionText;
+  const qTextEl = document.getElementById('active-q-text');
+  qTextEl.innerHTML = q.questionText;
 
   const optionsContainer = document.getElementById('active-q-options');
   optionsContainer.innerHTML = '';
 
   const userChoice = activeUserAnswers[idx].selectedOption;
 
-  ['A', 'B', 'C', 'D'].forEach(opt => {
+  ['A', 'B', 'C', 'D'].forEach((opt) => {
     const optDiv = document.createElement('div');
     optDiv.className = `quiz-option ${userChoice === opt ? 'selected' : ''}`;
     optDiv.innerHTML = `
       <div class="option-letter">${opt}</div>
-      <div style="font-size: 0.95rem;">${q['option' + opt]}</div>
+      <div>${q['option' + opt]}</div>
     `;
     optDiv.onclick = () => {
       activeUserAnswers[idx].selectedOption = opt;
@@ -825,78 +951,112 @@ function renderActiveExamQuestion(idx) {
     optionsContainer.appendChild(optDiv);
   });
 
-  // 控制上一題 / 下一題按鈕狀態
-  document.getElementById('btn-exam-prev').disabled = (idx === 0);
-  document.getElementById('btn-exam-next').disabled = (idx === activeExamQuestions.length - 1);
+  document.getElementById('btn-exam-prev').disabled = idx === 0;
+  document.getElementById('btn-exam-next').disabled = idx === activeExamQuestions.length - 1;
 
   renderExamNavGrid();
-  renderMath();
+  renderMath(document.getElementById('exam-active-view'));
 }
 
 async function submitActiveExam(type, moduleId) {
-  if (activeExamTimer) {
-    activeExamTimer.stop();
-  }
+  if (activeExamTimer) activeExamTimer.stop();
 
-  showToast('正在評分並分析弱點...', 'info');
+  showToast('正在評分並分析弱點', 'info');
   try {
     const timeSpent = activeExamTimer ? activeExamTimer.elapsed : 0;
     const result = await DB.submitExam(type, activeUserAnswers, timeSpent, moduleId);
-
-    // 顯示結果視圖
-    document.getElementById('exam-active-view').style.display = 'none';
-    document.getElementById('exam-result-view').style.display = 'block';
-
-    document.getElementById('res-score').innerText = result.score;
-    document.getElementById('res-correct').innerText = result.correctCount;
-    document.getElementById('res-total').innerText = result.totalQuestions;
-    document.getElementById('res-time').innerText = `${Math.floor(timeSpent / 60)} 分 ${timeSpent % 60} 秒`;
-
-    // 繪製雷達圖
-    const moduleRates = {};
-    for (const mId in result.moduleBreakdown) {
-      moduleRates[mId] = result.moduleBreakdown[mId].rate;
-    }
-    Charts.drawRadar('canvas-exam-radar', moduleRates);
-
-    // 錯題與詳解檢討清單
-    const errorList = document.getElementById('exam-error-list');
-    if (errorList) {
-      errorList.innerHTML = '';
-      result.details.forEach((det, i) => {
-        const item = document.createElement('div');
-        item.className = 'glass-card';
-        item.style.background = 'rgba(255, 255, 255, 0.015)';
-        item.style.border = `1px solid ${det.isCorrect ? 'rgba(0, 230, 118, 0.2)' : 'rgba(255, 23, 68, 0.2)'}`;
-        item.style.padding = '1.25rem';
-
-        item.innerHTML = `
-          <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
-            <span style="font-weight: 700; color: ${det.isCorrect ? 'var(--success)' : 'var(--danger)'};">第 ${i + 1} 題 — ${det.isCorrect ? '答對' : '答錯'}</span>
-            <span style="font-size: 0.75rem; color: var(--text-dark);">模組 [${det.moduleId}] | ${det.sourceRef || ''}</span>
-          </div>
-          <div class="markdown-view" style="font-size: 0.95rem; margin-bottom: 0.75rem;">${det.questionText}</div>
-          <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem;">您的回答：<b>${det.userAnswer || '未作答'}</b> | 正確解答：<b style="color: var(--success);">${det.correctAnswer}</b></div>
-          <div style="background: rgba(0,0,0,0.25); padding: 0.75rem; border-radius: 8px; font-size: 0.85rem; border-left: 3px solid var(--primary);" class="markdown-view">
-            <span style="font-weight: 600; color: var(--primary);">詳解解析：</span>${det.explanation || '無'}
-          </div>
-        `;
-        errorList.appendChild(item);
-      });
-    }
-
-    renderMath();
+    renderExamResultView(result);
     loadExamHistory();
   } catch (e) {
     showToast('交卷失敗：' + e.message, 'error');
   }
 }
 
+function renderExamResultView(result) {
+  document.getElementById('exam-setup-view').style.display = 'none';
+  document.getElementById('exam-active-view').style.display = 'none';
+  document.getElementById('exam-result-view').style.display = 'block';
+
+  document.getElementById('res-score').innerText = result.score;
+  document.getElementById('res-correct').innerText = result.correctCount;
+  document.getElementById('res-total').innerText = result.totalQuestions;
+  document.getElementById('res-time').innerText = `${Math.floor(result.timeSpent / 60)}m ${result.timeSpent % 60}s`;
+
+  const moduleRates = {};
+  for (const mId in result.moduleBreakdown) {
+    moduleRates[mId] = result.moduleBreakdown[mId].rate;
+  }
+  lastExamRadarRates = moduleRates;
+  Charts.drawRadar('canvas-exam-radar', moduleRates);
+
+  const errorList = document.getElementById('exam-error-list');
+  if (errorList) {
+    errorList.innerHTML = '';
+    if (!result.details || result.details.length === 0) {
+      errorList.innerHTML = '<div style="text-align: center; color: var(--text-dark); padding: 24px;">此筆歷史測驗建立於 v3.0 之前，未保存逐題作答明細。</div>';
+    } else {
+      result.details.forEach((det, i) => {
+        const item = document.createElement('div');
+        item.className = 'sub-card';
+        item.style.borderLeft = `2px solid ${det.isCorrect ? 'var(--success)' : 'var(--danger)'}`;
+
+        item.innerHTML = `
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 8px; flex-wrap: wrap;">
+            <span class="mono-num" style="font-weight: 600; color: ${det.isCorrect ? 'var(--success)' : 'var(--danger)'};">
+              第 ${i + 1} 題 — ${det.isCorrect ? '答對' : '答錯'}
+            </span>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span class="mono-num" style="font-size: 12px; color: var(--text-dark);">${det.moduleId} · ${det.sourceRef || ''}</span>
+              <button class="btn btn-secondary btn-sm btn-exam-to-card">
+                <span class="material-icons-round">style</span>
+                <span>轉閃卡</span>
+              </button>
+            </div>
+          </div>
+          <div class="markdown-view" style="font-size: 14px; margin-bottom: 8px;">${det.questionText}</div>
+          <div class="mono-num" style="font-size: 12.5px; color: var(--text-muted); margin-bottom: 8px;">
+            作答：<strong>${det.userAnswer || '未選'}</strong> · 正解：<strong style="color: var(--success);">${det.correctAnswer}</strong>
+          </div>
+          <div style="background: var(--bg-secondary); padding: 10px 12px; border-radius: 6px; font-size: 13px;" class="markdown-view">
+            <strong style="color: var(--accent);">解析：</strong>${det.explanation || '無'}
+          </div>
+        `;
+        item.querySelector('.btn-exam-to-card').onclick = () => convertQuestionToFlashcard(det);
+        errorList.appendChild(item);
+      });
+    }
+  }
+
+  renderMath(document.getElementById('exam-result-view'));
+}
+
 // ==========================================
-// 5. 知識卡片複習頁面 (Review / SM-2)
+// 5. 知識卡片複習頁面 (Review / SM-2 + 鍵盤快捷鍵)
 // ==========================================
 let activeReviewCards = [];
 let currentCardIndex = 0;
+
+if (!window._reviewKeyListenerBound) {
+  window._reviewKeyListenerBound = true;
+  document.addEventListener('keydown', (e) => {
+    if (currentRouteHash !== 'review') return;
+    const tag = (e.target && e.target.tagName) || '';
+    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag)) return;
+    if (activeReviewCards.length === 0 || currentCardIndex >= activeReviewCards.length) return;
+
+    const flipper = document.getElementById('review-card-flipper');
+    if (!flipper) return;
+
+    if (e.code === 'Space') {
+      e.preventDefault();
+      flipper.click();
+    } else if (['0', '1', '2', '3', '4', '5'].includes(e.key) && flipper.classList.contains('flipped')) {
+      e.preventDefault();
+      const btn = document.querySelector(`.rating-btn[data-score="${e.key}"]`);
+      if (btn) btn.click();
+    }
+  });
+}
 
 async function loadReviewPage() {
   const syllabus = await DB.getSyllabus();
@@ -906,7 +1066,6 @@ async function loadReviewPage() {
     allUnitValue: 'ALL'
   });
 
-  // 模組下拉選單加入 ALL 選項
   const modSelect = document.getElementById('review-filter-mod');
   if (modSelect) {
     modSelect.innerHTML = '';
@@ -916,7 +1075,6 @@ async function loadReviewPage() {
     }
   }
 
-  // 綁定自建卡片選單
   bindModuleUnitSelectors('card-add-mod', null, 'card-add-unit', syllabus);
   const cardAddMod = document.getElementById('card-add-mod');
   if (cardAddMod) {
@@ -926,12 +1084,10 @@ async function loadReviewPage() {
     }
   }
 
-  // 篩選切換
   if (modSelect) modSelect.onchange = () => loadActiveReviewQueue();
   const unitSelect = document.getElementById('review-filter-unit');
   if (unitSelect) unitSelect.onchange = () => loadActiveReviewQueue();
 
-  // 卡片翻面事件
   const flipper = document.getElementById('review-card-flipper');
   const ratingActions = document.getElementById('review-rating-actions');
   if (flipper) {
@@ -940,12 +1096,11 @@ async function loadReviewPage() {
       if (ratingActions) {
         ratingActions.style.display = flipper.classList.contains('flipped') ? 'flex' : 'none';
       }
-      renderMath();
+      renderMath(flipper);
     };
   }
 
-  // 評分按鈕 (0-5分)
-  document.querySelectorAll('.rating-btn').forEach(btn => {
+  document.querySelectorAll('.rating-btn').forEach((btn) => {
     btn.onclick = async (e) => {
       e.stopPropagation();
       const score = Number(btn.getAttribute('data-score'));
@@ -954,7 +1109,7 @@ async function loadReviewPage() {
 
       try {
         await DB.submitReviewCardScore(card.cardId, score);
-        showToast(`評分已提交 (${score}分)！下一次複習已排程。`, 'success');
+        showToast(`已提交評分 (${score}分)`, 'success');
         currentCardIndex++;
         renderCurrentReviewCard();
       } catch (err) {
@@ -963,7 +1118,19 @@ async function loadReviewPage() {
     };
   });
 
-  // 儲存手動自建卡片
+  const btnDeleteCard = document.getElementById('btn-delete-review-card');
+  if (btnDeleteCard) {
+    btnDeleteCard.onclick = async (e) => {
+      e.stopPropagation();
+      const card = activeReviewCards[currentCardIndex];
+      if (!card || !confirm('確定要永久刪除此知識卡嗎？')) return;
+      await DB.deleteReviewCard(card.cardId);
+      activeReviewCards.splice(currentCardIndex, 1);
+      showToast('已刪除知識卡片', 'info');
+      renderCurrentReviewCard();
+    };
+  }
+
   const btnSaveCard = document.getElementById('btn-save-card');
   if (btnSaveCard) {
     btnSaveCard.onclick = async () => {
@@ -973,14 +1140,14 @@ async function loadReviewPage() {
       const b = document.getElementById('card-add-back').value;
 
       if (!f || !b) {
-        showToast('請完整填寫卡片正面與背面內容！', 'warning');
+        showToast('請完整填寫卡片正面與背面內容', 'warning');
         return;
       }
 
       btnSaveCard.disabled = true;
       try {
         await DB.addManualReviewCard(m, u, f, b);
-        showToast('知識卡片已成功儲存！', 'success');
+        showToast('知識卡片已儲存', 'success');
         document.getElementById('card-add-front').value = '';
         document.getElementById('card-add-back').value = '';
         loadActiveReviewQueue();
@@ -1002,9 +1169,9 @@ async function loadActiveReviewQueue() {
   const dueCards = await DB.getDueReviewCards();
   if (currentRouteHash !== 'review') return;
 
-  activeReviewCards = dueCards.filter(c => {
-    const matchM = (mFilter === 'ALL' || c.moduleId === mFilter);
-    const matchU = (uFilter === 'ALL' || !uFilter || c.unitId === uFilter);
+  activeReviewCards = dueCards.filter((c) => {
+    const matchM = mFilter === 'ALL' || c.moduleId === mFilter;
+    const matchU = uFilter === 'ALL' || !uFilter || c.unitId === uFilter;
     return matchM && matchU;
   });
 
@@ -1036,18 +1203,19 @@ function renderCurrentReviewCard() {
   if (curSpan) curSpan.innerText = currentCardIndex + 1;
   if (totalSpan) totalSpan.innerText = activeReviewCards.length;
 
-  document.getElementById('review-card-mod-front').innerText = card.moduleId;
-  document.getElementById('review-card-mod-back').innerText = card.moduleId;
+  document.getElementById('review-card-mod-front').innerText = card.unitId || card.moduleId;
+  document.getElementById('review-card-mod-back').innerText = card.unitId || card.moduleId;
   document.getElementById('review-card-front-text').innerHTML = card.front;
   document.getElementById('review-card-back-text').innerHTML = card.back;
 
-  renderMath();
+  renderMath(flipper);
 }
 
 // ==========================================
 // 6. 口試模擬問答頁面 (Oral Simulator)
 // ==========================================
 let currentOralQuestion = null;
+let currentOralReportRecord = null;
 
 async function loadOralPage() {
   const modSelect = document.getElementById('oral-mod-select');
@@ -1066,16 +1234,16 @@ async function loadOralPage() {
 
       btnStart.disabled = true;
       try {
-        showToast('Gemini 考官正在擬定題目...', 'info');
+        showToast('Gemini 考官正在擬定題目', 'info');
         currentOralQuestion = await GeminiService.generateOralQuestionAI(mId, qType);
-        
+
         document.getElementById('oral-setup-box').style.display = 'none';
         document.getElementById('oral-active-box').style.display = 'flex';
         document.getElementById('oral-report-box').style.display = 'none';
 
         document.getElementById('active-oral-question').innerHTML = currentOralQuestion.question;
         document.getElementById('oral-user-answer').value = '';
-        renderMath();
+        renderMath(document.getElementById('oral-active-box'));
       } catch (e) {
         showToast('出題失敗：' + e.message, 'error');
       } finally {
@@ -1089,13 +1257,13 @@ async function loadOralPage() {
     btnSubmit.onclick = async () => {
       const ans = document.getElementById('oral-user-answer').value;
       if (!ans || ans.trim() === '') {
-        showToast('請先輸入您的回答內容！', 'warning');
+        showToast('請先輸入您的回答內容', 'warning');
         return;
       }
 
       btnSubmit.disabled = true;
       try {
-        showToast('Gemini 口試委員正在進行四維度評分...', 'info');
+        showToast('Gemini 口試委員正在進行四維度評分', 'info');
         const qType = document.getElementById('oral-type-select').value;
         const evalRes = await GeminiService.gradeOralAnswerAI(
           currentOralQuestion.question,
@@ -1118,38 +1286,31 @@ async function loadOralPage() {
         };
 
         await DB.saveOralPractice(practiceRecord);
-
-        // 渲染診斷報告
-        document.getElementById('oral-active-box').style.display = 'none';
-        document.getElementById('oral-report-box').style.display = 'flex';
-
-        document.getElementById('oral-report-question').innerHTML = currentOralQuestion.question;
-        document.getElementById('oral-report-user-answer').innerText = ans;
-        document.getElementById('oral-res-score').innerText = evalRes.score;
-        document.getElementById('oral-score-comp').innerText = evalRes.completeness;
-        document.getElementById('oral-score-acc').innerText = evalRes.accuracy;
-        document.getElementById('oral-score-log').innerText = evalRes.logic;
-        document.getElementById('oral-score-dep').innerText = evalRes.depth;
-        document.getElementById('oral-report-feedback').innerHTML = evalRes.feedback;
-        document.getElementById('oral-report-ref-answer').innerHTML = currentOralQuestion.referenceAnswer;
-
-        const missingUl = document.getElementById('oral-report-missing-list');
-        if (missingUl) {
-          missingUl.innerHTML = '';
-          (evalRes.missingPoints || []).forEach(p => {
-            const li = document.createElement('li');
-            li.innerText = p;
-            missingUl.appendChild(li);
-          });
-        }
-
-        renderMath();
+        showOralPracticeReport(practiceRecord);
         loadOralHistory();
       } catch (e) {
         showToast('評分失敗：' + e.message, 'error');
       } finally {
         btnSubmit.disabled = false;
       }
+    };
+  }
+
+  const btnOralToCard = document.getElementById('btn-oral-to-card');
+  if (btnOralToCard) {
+    btnOralToCard.onclick = async () => {
+      if (!currentOralReportRecord) return;
+      const missing = (currentOralReportRecord.aiFeedback && currentOralReportRecord.aiFeedback.missingPoints) || [];
+      const backText =
+        (missing.length > 0 ? `【缺漏重點】\n- ${missing.join('\n- ')}\n\n` : '') +
+        `【參考解答】\n${currentOralReportRecord.referenceAnswer || ''}`;
+      await DB.addManualReviewCard(
+        currentOralReportRecord.moduleId || 'M1',
+        '',
+        `[口試] ${currentOralReportRecord.question}`,
+        backText
+      );
+      showToast('已將口試缺漏與參考解答轉入 SM-2 知識卡', 'success');
     };
   }
 
@@ -1165,9 +1326,14 @@ function showOralSetup() {
 function showOralPracticeReport(p) {
   let evalRes = p.aiFeedback;
   if (typeof evalRes === 'string') {
-    try { evalRes = JSON.parse(evalRes); } catch (e) { evalRes = { feedback: p.aiFeedback }; }
+    try {
+      evalRes = JSON.parse(evalRes);
+    } catch (e) {
+      evalRes = { feedback: p.aiFeedback };
+    }
   }
   evalRes = evalRes || {};
+  currentOralReportRecord = { ...p, aiFeedback: evalRes };
 
   document.getElementById('oral-setup-box').style.display = 'none';
   document.getElementById('oral-active-box').style.display = 'none';
@@ -1188,17 +1354,17 @@ function showOralPracticeReport(p) {
     missingUl.innerHTML = '';
     const missing = evalRes.missingPoints || [];
     if (Array.isArray(missing) && missing.length > 0) {
-      missing.forEach(pt => {
+      missing.forEach((pt) => {
         const li = document.createElement('li');
         li.innerText = pt;
         missingUl.appendChild(li);
       });
     } else {
-      missingUl.innerHTML = '<li style="color: var(--success);">回答完整，無重大缺漏觀念！</li>';
+      missingUl.innerHTML = '<li style="color: var(--success);">無重大缺漏觀念</li>';
     }
   }
 
-  renderMath();
+  renderMath(document.getElementById('oral-report-box'));
 }
 
 async function loadOralHistory() {
@@ -1209,43 +1375,24 @@ async function loadOralHistory() {
   container.innerHTML = '';
 
   if (practices.length === 0) {
-    container.innerHTML = '<div style="text-align: center; color: var(--text-dark); padding: 2rem;">尚無口試紀錄</div>';
+    container.innerHTML = '<div style="text-align: center; color: var(--text-dark); padding: 24px;">尚無口試紀錄</div>';
     return;
   }
 
-  practices.forEach(p => {
+  practices.forEach((p) => {
     const card = document.createElement('div');
-    card.className = 'glass-card';
-    card.style.background = 'rgba(255,255,255,0.015)';
-    card.style.border = '1px solid var(--border-color)';
-    card.style.padding = '0.85rem';
-    card.style.minWidth = '0';
-    card.style.overflow = 'hidden';
-    card.style.cursor = 'pointer';
-    card.style.transition = 'all 0.2s ease';
+    card.className = 'sub-card rec-card-clickable';
+    card.style.padding = '10px 12px';
 
     card.innerHTML = `
-      <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.25rem;">
-        <span style="font-weight: 600; color: var(--secondary);">[${p.moduleId}] ${p.date}</span>
-        <span style="font-weight: 700; color: ${p.aiScore >= 70 ? 'var(--success)' : 'var(--warning)'};">${p.aiScore} 分</span>
+      <div style="display: flex; justify-content: space-between; font-size: 12px; color: var(--text-muted); margin-bottom: 4px;">
+        <span class="mono-num" style="color: var(--accent);">[${p.moduleId}] ${p.date}</span>
+        <span class="mono-num" style="font-weight: 600; color: ${p.aiScore >= 70 ? 'var(--success)' : 'var(--warning)'};">${p.aiScore} 分</span>
       </div>
-      <div style="font-size: 0.85rem; font-weight: 600; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${p.question}</div>
+      <div style="font-size: 13px; font-weight: 500; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${p.question}</div>
     `;
 
-    card.onmouseenter = () => {
-      card.style.background = 'rgba(0, 242, 254, 0.08)';
-      card.style.borderColor = 'var(--secondary)';
-    };
-    card.onmouseleave = () => {
-      card.style.background = 'rgba(255,255,255,0.015)';
-      card.style.borderColor = 'var(--border-color)';
-    };
-
-    // 點擊歷史紀錄卡片，立即展開該題之口試報告
-    card.onclick = () => {
-      showOralPracticeReport(p);
-    };
-
+    card.onclick = () => showOralPracticeReport(p);
     container.appendChild(card);
   });
 }
@@ -1259,7 +1406,7 @@ async function loadJournalPage() {
   if (unitSelect) {
     unitSelect.innerHTML = '';
     unitSelect.add(new Option('一般通用研讀 (General Study)', 'General'));
-    syllabus.forEach(u => {
+    syllabus.forEach((u) => {
       unitSelect.add(new Option(`[${u.unitId}] ${u.unitName}`, u.unitId));
     });
   }
@@ -1272,14 +1419,14 @@ async function loadJournalPage() {
       const n = document.getElementById('journal-add-notes').value;
 
       if (!n || n.trim() === '') {
-        showToast('心得筆記不可為空！', 'warning');
+        showToast('心得筆記不可為空', 'warning');
         return;
       }
 
       btnSave.disabled = true;
       try {
         await DB.addManualStudyLog(u, m, n);
-        showToast('研讀日誌已成功儲存！', 'success');
+        showToast('研讀日誌已儲存', 'success');
         document.getElementById('journal-add-notes').value = '';
         loadJournalList();
       } catch (err) {
@@ -1297,7 +1444,7 @@ async function loadJournalList() {
   const container = document.getElementById('journal-list-container');
   if (!container) return;
 
-  container.innerHTML = '<div class="loader-container"><div class="spinner"></div><div class="loading-text">載入日誌中...</div></div>';
+  container.innerHTML = '<div class="loader-container"><div class="spinner"></div><div class="loading-text">載入日誌中</div></div>';
 
   try {
     const logs = await DB.getStudyLogs();
@@ -1306,37 +1453,33 @@ async function loadJournalList() {
     container.innerHTML = '';
 
     if (logs.length === 0) {
-      container.innerHTML = '<div style="text-align: center; color: var(--text-dark); padding: 3rem;">目前尚無研讀日誌。請開始計時學習或在右側手動補登！</div>';
+      container.innerHTML = '<div style="text-align: center; color: var(--text-dark); padding: 32px;">目前尚無研讀日誌，可啟動計時或於右側手動補登。</div>';
       return;
     }
 
-    logs.forEach(log => {
+    logs.forEach((log) => {
       const card = document.createElement('div');
-      card.className = 'glass-card';
-      card.style.background = 'rgba(255,255,255,0.01)';
-      card.style.border = '1px solid var(--border-color)';
-      card.style.padding = '1.25rem';
-
+      card.className = 'sub-card';
       const unitText = log.unitId === 'General' ? '通用研讀' : `單元 ${log.unitId}`;
 
       card.innerHTML = `
-        <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.5rem; border-bottom: 1px solid rgba(255,255,255,0.04); padding-bottom: 0.25rem;">
-          <span style="font-weight: 600; color: var(--secondary);">${log.date}</span>
-          <span>${unitText} | 研讀了 <span style="color: var(--secondary); font-weight: bold;">${log.minutes}</span> 分鐘</span>
+        <div style="display: flex; justify-content: space-between; font-size: 12px; color: var(--text-muted); margin-bottom: 6px; border-bottom: 1px solid var(--border-color); padding-bottom: 4px;">
+          <span class="mono-num" style="color: var(--accent);">${log.date}</span>
+          <span class="mono-num">${unitText} · ${log.minutes} min</span>
         </div>
-        <div style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.6; white-space: pre-wrap;" class="markdown-view">${log.journalEntry}</div>
+        <div style="font-size: 13.5px; color: var(--text-main); white-space: pre-wrap;" class="markdown-view">${log.journalEntry}</div>
       `;
       container.appendChild(card);
     });
 
-    renderMath();
+    renderMath(container);
   } catch (err) {
-    container.innerHTML = `<div style="color: var(--danger); text-align: center; padding: 2rem;">載入失敗: ${err.message}</div>`;
+    container.innerHTML = `<div style="color: var(--danger); text-align: center; padding: 24px;">載入失敗: ${err.message}</div>`;
   }
 }
 
 // ==========================================
-// 8. 系統設定與備份管理 (Settings)
+// 8. 系統設定與 Firebase 資料庫搬移 (Settings)
 // ==========================================
 async function loadSettingsPage() {
   const examDateInput = document.getElementById('input-exam-date');
@@ -1346,16 +1489,15 @@ async function loadSettingsPage() {
   const apiKeyInput = document.getElementById('input-api-key');
   const modelSelect = document.getElementById('select-model');
 
-  // Firebase 設定欄位
+  const fbPasteInput = document.getElementById('input-fb-paste');
   const fbApiKeyInput = document.getElementById('input-fb-api-key');
   const fbProjectIdInput = document.getElementById('input-fb-project-id');
   const fbStatusSpan = document.getElementById('fb-connection-status');
 
-  // 動態同步前 5 款最新與最合適的 Gemini 模型
   async function updateModelOptions(currentKey, preferredModel, notify = false) {
     const hintEl = document.getElementById('model-status-hint');
     const btnSync = document.getElementById('btn-refresh-models');
-    if (hintEl) hintEl.innerHTML = '<span style="color: var(--secondary);">⏳ 正在向 Google API 查詢最新模型...</span>';
+    if (hintEl) hintEl.innerText = '正在查詢 Google API 最新模型...';
     if (btnSync) btnSync.disabled = true;
 
     try {
@@ -1365,7 +1507,7 @@ async function loadSettingsPage() {
       modelSelect.innerHTML = '';
       let isTargetFound = false;
 
-      topModels.forEach(m => {
+      topModels.forEach((m) => {
         const opt = new Option(m.name, m.id);
         if (m.id === targetModel) {
           opt.selected = true;
@@ -1374,28 +1516,65 @@ async function loadSettingsPage() {
         modelSelect.add(opt);
       });
 
-      // 若目前儲存的模型不在前 5 名中，保留使用者既有設定
       if (!isTargetFound && targetModel) {
-        const customOpt = new Option(`${targetModel} (目前儲存中)`, targetModel);
+        const customOpt = new Option(`${targetModel} (目前設定)`, targetModel);
         customOpt.selected = true;
         modelSelect.add(customOpt, 0);
       }
 
       if (hintEl) {
-        if (currentKey && currentKey.trim()) {
-          hintEl.innerHTML = '<span style="color: var(--success);">✓ 已根據 Google API 即時更新最適合醫學物理考照的前 5 款最新模型。</span>';
-        } else {
-          hintEl.innerText = '系統已載入推薦前 5 款模型；輸入 API Key 後點選「即時同步」可線上即時偵測。';
-        }
+        hintEl.innerText =
+          currentKey && currentKey.trim()
+            ? '已依據 Google API 即時更新前 5 款適用模型'
+            : '已載入預設模型清單；填入 API Key 後可點選即時同步';
       }
-
-      if (notify) {
-        showToast('已即時同步最新模型清單！', 'success');
-      }
+      if (notify) showToast('已同步最新模型清單', 'success');
     } catch (err) {
-      if (hintEl) hintEl.innerText = '載入模型清單時發生狀況，已啟用預設推薦清單。';
+      if (hintEl) hintEl.innerText = '載入模型清單失敗，已保留預設清單';
     } finally {
       if (btnSync) btnSync.disabled = false;
+    }
+  }
+
+  async function refreshFirebaseStatusAndStats() {
+    const probe = await verifyFirebaseConnection();
+    if (fbStatusSpan) {
+      if (probe.connected) {
+        fbStatusSpan.innerText = probe.mode === 'offline-cache' ? '離線快取中' : `已連線 (${probe.projectId})`;
+        fbStatusSpan.className = 'badge badge-completed';
+      } else if (probe.mode === 'error') {
+        fbStatusSpan.innerText = '連線失敗';
+        fbStatusSpan.className = 'badge badge-review';
+        fbStatusSpan.title = probe.reason || '';
+      } else {
+        fbStatusSpan.innerText = '本機模式 (LocalStorage)';
+        fbStatusSpan.className = 'badge badge-todo';
+      }
+    }
+
+    const statsGrid = document.getElementById('fb-stats-grid');
+    if (statsGrid) {
+      const stats = await DB.getStorageStats();
+      const labels = {
+        progress: '進度紀錄',
+        questions: '練習題庫',
+        reviewCards: 'SM-2 卡片',
+        examResults: '模擬考',
+        oralPractices: '口試紀錄',
+        studyLogs: '學習日誌'
+      };
+      statsGrid.innerHTML = Object.keys(labels)
+        .map((k) => {
+          const lVal = stats.local[k] || 0;
+          const cVal = stats.cloud ? stats.cloud[k] : '—';
+          return `
+            <div class="sync-stat-item">
+              <div class="sync-stat-label">${labels[k]}</div>
+              <div class="sync-stat-val">本機 ${lVal} / 雲端 ${cVal}</div>
+            </div>
+          `;
+        })
+        .join('');
     }
   }
 
@@ -1404,46 +1583,42 @@ async function loadSettingsPage() {
     startDateInput.value = (await DB.getConfig('startDate')) || new Date().toISOString().split('T')[0];
     dailyGoalInput.value = (await DB.getConfig('dailyGoalMinutes')) || '45';
     notebookUrlInput.value = (await DB.getConfig('notebookLmUrl')) || '';
-    
+
     const savedApiKey = (await DB.getConfig('geminiApiKey')) || '';
     const savedModel = (await DB.getConfig('geminiModel')) || 'gemini-2.5-flash';
     apiKeyInput.value = savedApiKey;
 
     await updateModelOptions(savedApiKey, savedModel, false);
 
-    // 綁定「即時同步」按鈕
     const btnRefresh = document.getElementById('btn-refresh-models');
     if (btnRefresh) {
-      btnRefresh.onclick = async () => {
-        await updateModelOptions(apiKeyInput.value.trim(), modelSelect.value, true);
-      };
+      btnRefresh.onclick = async () => updateModelOptions(apiKeyInput.value.trim(), modelSelect.value, true);
     }
 
-    // 當使用者貼上或變更 API Key 時自動嘗試同步
     apiKeyInput.addEventListener('change', () => {
-      if (apiKeyInput.value.trim()) {
-        updateModelOptions(apiKeyInput.value.trim(), modelSelect.value, false);
-      }
+      if (apiKeyInput.value.trim()) updateModelOptions(apiKeyInput.value.trim(), modelSelect.value, false);
     });
 
     const activeFb = getActiveFirebaseConfig();
     if (fbApiKeyInput) fbApiKeyInput.value = activeFb.apiKey || '';
     if (fbProjectIdInput) fbProjectIdInput.value = activeFb.projectId || '';
-
-    if (fbStatusSpan) {
-      if (isFirebaseConnected) {
-        fbStatusSpan.innerText = '已連接至 Cloud Firestore';
-        fbStatusSpan.className = 'badge badge-completed';
-      } else {
-        fbStatusSpan.innerText = '使用瀏覽器本機儲存 (LocalStorage)';
-        fbStatusSpan.className = 'badge badge-review';
-      }
-    }
+    await refreshFirebaseStatusAndStats();
   } catch (e) {
     showToast('讀取設定檔失敗', 'error');
   }
 
-  // 儲存學習參數
+  // 智慧解析整段 firebaseConfig 貼上
+  if (fbPasteInput) {
+    fbPasteInput.addEventListener('input', () => {
+      const parsed = parseFirebaseConfigInput(fbPasteInput.value);
+      if (parsed) {
+        fbProjectIdInput.value = parsed.projectId;
+        fbApiKeyInput.value = parsed.apiKey;
+        showToast(`已自動擷取專案 ${parsed.projectId} 配置`, 'success');
+      }
+    });
+  }
+
   document.getElementById('btn-save-params').onclick = async () => {
     const btn = document.getElementById('btn-save-params');
     btn.disabled = true;
@@ -1452,7 +1627,7 @@ async function loadSettingsPage() {
       await DB.saveConfig('startDate', startDateInput.value);
       await DB.saveConfig('dailyGoalMinutes', dailyGoalInput.value);
       await DB.saveConfig('notebookLmUrl', notebookUrlInput.value);
-      showToast('備考學習參數已儲存！', 'success');
+      showToast('學習參數已儲存', 'success');
     } catch (e) {
       showToast('儲存失敗：' + e.message, 'error');
     } finally {
@@ -1460,14 +1635,13 @@ async function loadSettingsPage() {
     }
   };
 
-  // 儲存 Gemini API 金鑰
   document.getElementById('btn-save-ai').onclick = async () => {
     const btn = document.getElementById('btn-save-ai');
     btn.disabled = true;
     try {
       await DB.saveConfig('geminiApiKey', apiKeyInput.value.trim());
       await DB.saveConfig('geminiModel', modelSelect.value);
-      showToast('Gemini AI 連線設定已儲存！', 'success');
+      showToast('Gemini AI 設定已儲存', 'success');
     } catch (e) {
       showToast('儲存失敗：' + e.message, 'error');
     } finally {
@@ -1475,29 +1649,110 @@ async function loadSettingsPage() {
     }
   };
 
-  // 儲存 Firebase 連線設定
+  // 儲存並驗證 Firebase 連線
   const btnSaveFb = document.getElementById('btn-save-fb');
   if (btnSaveFb) {
-    btnSaveFb.onclick = () => {
-      const fbConfig = {
-        apiKey: fbApiKeyInput.value.trim(),
-        projectId: fbProjectIdInput.value.trim(),
-        authDomain: `${fbProjectIdInput.value.trim()}.firebaseapp.com`,
-        storageBucket: `${fbProjectIdInput.value.trim()}.appspot.com`
+    btnSaveFb.onclick = async () => {
+      const parsed = fbPasteInput ? parseFirebaseConfigInput(fbPasteInput.value) : null;
+      const projectId = (parsed && parsed.projectId) || fbProjectIdInput.value.trim();
+      const apiKey = (parsed && parsed.apiKey) || fbApiKeyInput.value.trim();
+
+      if (!projectId || !apiKey) {
+        showToast('請填入 Project ID 與 Web API Key', 'warning');
+        return;
+      }
+
+      const fbConfig = parsed || {
+        apiKey,
+        projectId,
+        authDomain: `${projectId}.firebaseapp.com`,
+        storageBucket: `${projectId}.appspot.com`
       };
+
       saveCustomFirebaseConfig(fbConfig);
-      showToast('Firebase 設定已儲存，正在重新連線...', 'info');
-      setTimeout(() => location.reload(), 1000);
+      showToast('正在驗證 Firebase 連線與初始化', 'info');
+      setTimeout(() => location.reload(), 600);
     };
   }
 
-  // 資料庫自癒初始化
+  const btnClearFb = document.getElementById('btn-clear-fb');
+  if (btnClearFb) {
+    btnClearFb.onclick = () => {
+      if (!confirm('確定要清除 Firebase 設定並切換回純本機模式嗎？')) return;
+      saveCustomFirebaseConfig(null);
+      location.reload();
+    };
+  }
+
+  // 本機資料一鍵推送至 Firebase
+  const btnPushLocal = document.getElementById('btn-push-local-fb');
+  if (btnPushLocal) {
+    btnPushLocal.onclick = async () => {
+      if (!confirm('確定要將目前本機 LocalStorage 的所有進度、題庫與卡片推送至 Firebase Firestore 嗎？')) return;
+      btnPushLocal.disabled = true;
+      try {
+        showToast('正在批次推送本機資料至 Firebase', 'info');
+        const res = await DB.pushLocalToFirebase();
+        showToast(`推送成功：題庫 ${res.counts.questions} 題、卡片 ${res.counts.reviewCards} 張`, 'success');
+        await refreshFirebaseStatusAndStats();
+      } catch (e) {
+        showToast('推送失敗：' + e.message, 'error');
+      } finally {
+        btnPushLocal.disabled = false;
+      }
+    };
+  }
+
+  // 從 Firebase 下載覆蓋本機快取
+  const btnPullCloud = document.getElementById('btn-pull-fb-local');
+  if (btnPullCloud) {
+    btnPullCloud.onclick = async () => {
+      btnPullCloud.disabled = true;
+      try {
+        showToast('正在從 Firebase 下載最新資料', 'info');
+        const res = await DB.pullFirebaseToLocal();
+        showToast(`下載完成：題庫 ${res.counts.questions} 題、卡片 ${res.counts.reviewCards} 張`, 'success');
+        await refreshFirebaseStatusAndStats();
+      } catch (e) {
+        showToast('下載失敗：' + e.message, 'error');
+      } finally {
+        btnPullCloud.disabled = false;
+      }
+    };
+  }
+
+  // 舊版 Google Sheet 免後端直連搬移至 Firebase
+  const btnMigrateSheet = document.getElementById('btn-migrate-gsheet');
+  if (btnMigrateSheet) {
+    btnMigrateSheet.onclick = async () => {
+      const sheetInput = document.getElementById('input-gsheet-id')?.value.trim();
+      if (!sheetInput) {
+        showToast('請輸入 Google Sheet ID 或網址', 'warning');
+        return;
+      }
+      btnMigrateSheet.disabled = true;
+      try {
+        showToast('正在從 Google Sheet 讀取並寫入 Firebase', 'info');
+        const res = await DB.migrateFromGoogleSheet(sheetInput);
+        showToast(
+          `搬移成功：題庫 ${res.counts.questions} 題、閃卡 ${res.counts.reviewCards} 張、日誌 ${res.counts.studyLogs} 筆`,
+          'success'
+        );
+        await refreshFirebaseStatusAndStats();
+      } catch (e) {
+        showToast('搬移失敗：' + e.message, 'error');
+      } finally {
+        btnMigrateSheet.disabled = false;
+      }
+    };
+  }
+
   document.getElementById('btn-init-db').onclick = async () => {
-    if (!confirm('您確定要初始化/修復資料庫結構嗎？\n此動作會為您補齊 10 大領域、37 個學習單元課綱。(已建立的自建進度不會被清除)')) return;
+    if (!confirm('確定要初始化 / 修復 37 單元課綱結構嗎？既有學習進度不會被清除。')) return;
     const btn = document.getElementById('btn-init-db');
     btn.disabled = true;
     try {
-      showToast('正在初始化資料庫...', 'info');
+      showToast('正在修復課綱結構', 'info');
       const res = await DB.init(true);
       showToast(res.message, 'success');
     } catch (e) {
@@ -1507,7 +1762,6 @@ async function loadSettingsPage() {
     }
   };
 
-  // 匯出完整 JSON 備份
   const btnExport = document.getElementById('btn-export-backup');
   if (btnExport) {
     btnExport.onclick = async () => {
@@ -1522,14 +1776,13 @@ async function loadSettingsPage() {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        showToast('備份檔案已成功下載！', 'success');
+        showToast('備份檔案已下載', 'success');
       } catch (e) {
-        showToast('匯出備份失敗：' + e.message, 'error');
+        showToast('匯出失敗：' + e.message, 'error');
       }
     };
   }
 
-  // 還原 JSON 備份
   const fileInput = document.getElementById('input-import-backup');
   if (fileInput) {
     fileInput.onchange = async (e) => {
@@ -1538,10 +1791,10 @@ async function loadSettingsPage() {
       const reader = new FileReader();
       reader.onload = async (evt) => {
         try {
-          showToast('正在還原資料庫備份...', 'info');
+          showToast('正在還原資料庫備份', 'info');
           const res = await DB.importAllDataJSON(evt.target.result);
           showToast(res.message, 'success');
-          setTimeout(() => location.reload(), 1500);
+          setTimeout(() => location.reload(), 1200);
         } catch (err) {
           showToast(err.message, 'error');
         }

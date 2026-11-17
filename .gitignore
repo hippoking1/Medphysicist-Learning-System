@@ -1,0 +1,14 @@
+# Credentials & secrets (never commit API keys or service accounts)
+.env
+.env.*
+*service-account*.json
+*firebase-adminsdk*.json
+*credentials*.json
+
+# Local user backups
+*backup*.json
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/

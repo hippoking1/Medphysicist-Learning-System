@@ -1,42 +1,48 @@
 /**
  * 醫學物理師考照自學系統 - 資料存取層 (Data Access Object - db.js)
- * 支援 Firebase Cloud Firestore 與 LocalStorage 自動雙模切換
+ * 支援 Firebase Cloud Firestore 與 LocalStorage 雙模切換，以及本機/Google Sheet 一鍵搬移上雲
  */
+
+const LEGACY_GSHEET_ID = '1-ATEDk8TtYZRA0gdOFfgzp5ZIYpYWzSRHvcE5eaYcnQ';
 
 const DB = {
   /**
    * 初始化資料庫與自癒種子資料 (Self-Healing)
+   * 若首次連上空白 Firestore 且本機已有學習紀錄，自動無痛將本機資料推送上雲
    */
   async init(forceSeeding = false) {
     const db = initFirebaseApp();
-    
+
     if (db && isFirebaseConnected) {
       try {
-        const syllabusSnap = await db.collection('syllabus').get();
-        if (syllabusSnap.empty || forceSeeding) {
-          console.log('[DB] Firestore Syllabus 為空或收到強制初始化請求，開始注入 37 個單元種子資料...');
-          const batch = db.batch();
-          
-          DEFAULT_SYLLABUS.forEach(unit => {
-            const docRef = db.collection('syllabus').doc(unit.unitId);
-            batch.set(docRef, unit);
-          });
-          
-          // 預設 Config
-          const configRef = db.collection('config').doc('settings');
-          batch.set(configRef, DEFAULT_CONFIGS, { merge: true });
-          
-          await batch.commit();
-          console.log('[DB] Firestore 種子資料寫入完成！');
+        const probe = await verifyFirebaseConnection();
+        if (probe.connected) {
+          const syllabusSnap = await db.collection('syllabus').get();
+          if (syllabusSnap.empty || forceSeeding) {
+            // 檢查本機是否有既有使用者資料，若有則連同課綱一併上雲，避免切換雲端時「資料看似消失」
+            const hasLocalUserData = this._hasLocalUserData();
+            if (syllabusSnap.empty && hasLocalUserData && !forceSeeding) {
+              console.log('[DB] 偵測到全新 Firestore 且本機已有學習紀錄，自動執行上雲遷移...');
+              await this.pushLocalToFirebase();
+              return { success: true, message: '已自動將本機資料同步遷移至 Firebase Firestore' };
+            }
+
+            const batch = db.batch();
+            DEFAULT_SYLLABUS.forEach((unit) => {
+              batch.set(db.collection('syllabus').doc(unit.unitId), unit);
+            });
+            batch.set(db.collection('config').doc('settings'), DEFAULT_CONFIGS, { merge: true });
+            await batch.commit();
+          }
+          return { success: true, message: 'Firestore 資料庫連線成功' };
         }
-        return { success: true, message: 'Firestore 資料庫初始化成功' };
       } catch (err) {
         console.error('[DB] Firestore 初始化失敗，降級至 LocalStorage:', err);
       }
     }
-    
+
     // LocalStorage 降級模式
-    let localSyllabus = this._getLocal('syllabus');
+    const localSyllabus = this._getLocal('syllabus');
     if (!localSyllabus || localSyllabus.length === 0 || forceSeeding) {
       this._setLocal('syllabus', DEFAULT_SYLLABUS);
       if (!this._getLocal('config')) {
@@ -44,6 +50,14 @@ const DB = {
       }
     }
     return { success: true, message: '本機資料庫初始化成功 (LocalStorage)' };
+  },
+
+  _hasLocalUserData() {
+    const keys = ['progress', 'questions', 'reviewCards', 'examResults', 'oralPractices', 'studyLogs'];
+    return keys.some((k) => {
+      const val = this._getLocal(k);
+      return Array.isArray(val) && val.length > 0;
+    });
   },
 
   // ==========================================
@@ -57,15 +71,26 @@ const DB = {
           return doc.data()[key];
         }
       } catch (e) {
-        console.warn(`[DB] 讀取 Firestore Config 失敗 (${key})，使用 LocalStorage:`, e);
+        console.warn(`[DB] 讀取 Firestore Config 失敗 (${key}):`, e);
       }
     }
     const local = this._getLocal('config') || DEFAULT_CONFIGS;
     return local[key] !== undefined ? local[key] : (DEFAULT_CONFIGS[key] || '');
   },
 
+  async getAllConfig() {
+    if (dbInstance && isFirebaseConnected) {
+      try {
+        const doc = await dbInstance.collection('config').doc('settings').get();
+        if (doc.exists) {
+          return { ...DEFAULT_CONFIGS, ...doc.data() };
+        }
+      } catch (e) {}
+    }
+    return { ...DEFAULT_CONFIGS, ...(this._getLocal('config') || {}) };
+  },
+
   async saveConfig(key, value) {
-    // 雙寫：優先寫入 LocalStorage 確保即時可用
     const local = this._getLocal('config') || { ...DEFAULT_CONFIGS };
     local[key] = value;
     this._setLocal('config', local);
@@ -89,7 +114,7 @@ const DB = {
         const snap = await dbInstance.collection('syllabus').get();
         if (!snap.empty) {
           const list = [];
-          snap.forEach(doc => list.push(doc.data()));
+          snap.forEach((doc) => list.push(doc.data()));
           return list.sort((a, b) => Number(a.orderIndex) - Number(b.orderIndex));
         }
       } catch (e) {
@@ -107,27 +132,29 @@ const DB = {
   // ==========================================
   // 學習進度 (Progress)
   // ==========================================
-  async getProgress() {
-    const syllabus = await this.getSyllabus();
-    let progressMap = {};
-
+  async getRawProgressRecords() {
     if (dbInstance && isFirebaseConnected) {
       try {
         const snap = await dbInstance.collection('progress').get();
-        snap.forEach(doc => {
-          progressMap[doc.id] = doc.data();
-        });
+        const records = [];
+        snap.forEach((doc) => records.push({ unitId: doc.id, ...doc.data() }));
+        return records;
       } catch (e) {
         console.warn('[DB] 讀取 Firestore Progress 失敗，使用 LocalStorage:', e);
-        const localProg = this._getLocal('progress') || [];
-        localProg.forEach(p => { progressMap[p.unitId] = p; });
       }
-    } else {
-      const localProg = this._getLocal('progress') || [];
-      localProg.forEach(p => { progressMap[p.unitId] = p; });
     }
+    return this._getLocal('progress') || [];
+  },
 
-    return syllabus.map(unit => {
+  async getProgress() {
+    const syllabus = await this.getSyllabus();
+    const rawList = await this.getRawProgressRecords();
+    const progressMap = {};
+    rawList.forEach((p) => {
+      progressMap[p.unitId] = p;
+    });
+
+    return syllabus.map((unit) => {
       const prog = progressMap[unit.unitId] || {};
       return {
         ...unit,
@@ -144,13 +171,11 @@ const DB = {
     const today = new Date().toISOString().split('T')[0];
     const addMinutes = Number(minutes || 0);
 
-    // 取得現有資料
     const allProgress = await this.getProgress();
-    const existing = allProgress.find(p => p.unitId === unitId);
-    
-    let currentTotal = existing ? Number(existing.totalMinutes || 0) : 0;
-    let newTotalMinutes = currentTotal + addMinutes;
+    const existing = allProgress.find((p) => p.unitId === unitId);
 
+    const currentTotal = existing ? Number(existing.totalMinutes || 0) : 0;
+    let newTotalMinutes = currentTotal + addMinutes;
     let startDate = existing ? existing.startDate : '';
     let completeDate = existing ? existing.completeDate : '';
 
@@ -166,16 +191,15 @@ const DB = {
     }
 
     const dataToSave = {
-      unitId: unitId,
-      status: status,
-      startDate: startDate,
-      completeDate: completeDate,
+      unitId,
+      status,
+      startDate,
+      completeDate,
       totalMinutes: newTotalMinutes,
       notes: notes !== undefined ? notes : (existing ? existing.notes : ''),
       updatedAt: new Date().toISOString()
     };
 
-    // 1. 寫入 Progress
     if (dbInstance && isFirebaseConnected) {
       try {
         await dbInstance.collection('progress').doc(unitId).set(dataToSave, { merge: true });
@@ -183,17 +207,15 @@ const DB = {
         console.warn('[DB] 寫入 Firestore Progress 失敗:', e);
       }
     }
-    
-    // 同步 LocalStorage
-    let localProg = this._getLocal('progress') || [];
-    const idx = localProg.findIndex(p => p.unitId === unitId);
+
+    const localProg = this._getLocal('progress') || [];
+    const idx = localProg.findIndex((p) => p.unitId === unitId);
     if (idx >= 0) localProg[idx] = dataToSave;
     else localProg.push(dataToSave);
     this._setLocal('progress', localProg);
 
-    // 2. 若有新增時數，記錄於 StudyLog
     if (addMinutes > 0) {
-      await this.addManualStudyLog(unitId, addMinutes, `學習單元：${unitId}。新增研讀時數。`);
+      await this.addManualStudyLog(unitId, addMinutes, `學習單元：${unitId}（累計 ${addMinutes} 分鐘）`);
     }
 
     return { success: true, data: dataToSave };
@@ -207,7 +229,7 @@ const DB = {
     if (dbInstance && isFirebaseConnected) {
       try {
         const snap = await dbInstance.collection('questions').get();
-        snap.forEach(doc => allQs.push(doc.data()));
+        snap.forEach((doc) => allQs.push(doc.data()));
       } catch (e) {
         console.warn('[DB] 讀取 Firestore Questions 失敗，使用 LocalStorage:', e);
         allQs = this._getLocal('questions') || [];
@@ -216,7 +238,7 @@ const DB = {
       allQs = this._getLocal('questions') || [];
     }
 
-    return allQs.filter(q => {
+    return allQs.filter((q) => {
       const qMod = q.moduleId ? String(q.moduleId).trim().toUpperCase() : '';
       const qTopic = q.topicId ? String(q.topicId).trim().toUpperCase() : '';
       const targetMod = moduleId ? String(moduleId).trim().toUpperCase() : '';
@@ -260,7 +282,6 @@ const DB = {
     const local = this._getLocal('questions') || [];
     local.push(newQ);
     this._setLocal('questions', local);
-
     return newQ;
   },
 
@@ -269,19 +290,14 @@ const DB = {
 
     if (dbInstance && isFirebaseConnected) {
       try {
-        const batch = dbInstance.batch();
-        questionsArray.forEach(q => {
-          const ref = dbInstance.collection('questions').doc(q.questionId);
-          batch.set(ref, q);
-        });
-        await batch.commit();
+        await this._batchWriteCollection('questions', questionsArray, 'questionId');
       } catch (e) {
         console.warn('[DB] 批次寫入 Firestore Questions 失敗:', e);
       }
     }
 
     const local = this._getLocal('questions') || [];
-    questionsArray.forEach(q => local.push(q));
+    questionsArray.forEach((q) => local.push(q));
     this._setLocal('questions', local);
     return true;
   },
@@ -295,7 +311,7 @@ const DB = {
       }
     }
     const local = this._getLocal('questions') || [];
-    const q = local.find(item => item.questionId === questionId);
+    const q = local.find((item) => item.questionId === questionId);
     if (q) {
       q.verified = true;
       this._setLocal('questions', local);
@@ -312,70 +328,66 @@ const DB = {
       }
     }
     let local = this._getLocal('questions') || [];
-    local = local.filter(q => q.questionId !== questionId);
+    local = local.filter((q) => q.questionId !== questionId);
     this._setLocal('questions', local);
     return true;
   },
 
   async getUnitQuiz(unitId, moduleId, topicId) {
     let allQs = await this.getQuestions();
-    let list = allQs.filter(q => q.unitId === unitId);
+    let list = allQs.filter((q) => q.unitId === unitId);
 
-    // 自癒出題：若該單元題目小於 3 題，自動呼叫 Gemini 生成 3 題
     if (list.length < 3) {
       try {
         const generated = await GeminiService.generateAIQuestions(moduleId, topicId, 3, 2, unitId);
         if (generated && generated.length > 0) {
           allQs = await this.getQuestions();
-          list = allQs.filter(q => q.unitId === unitId);
+          list = allQs.filter((q) => q.unitId === unitId);
         }
       } catch (e) {
         console.warn('[DB] 隨堂測驗自動動態補題失敗:', e);
       }
     }
 
-    // 隨機打亂並取 3-5 題
-    const shuffled = [...list].sort(() => 0.5 - Math.random());
+    const shuffled = this._shuffle(list);
     const count = Math.min(Math.max(list.length, 3), 5);
     return shuffled.slice(0, count);
   },
 
   // ==========================================
-  // 模擬測驗 (Exam Center)
+  // 模擬測驗 (Exam Center - 涵蓋完整 M1~M10)
   // ==========================================
   async generateExam(examType, moduleId) {
     const allQuestions = await this.getQuestions();
     if (allQuestions.length === 0) {
-      throw new Error('題庫中目前沒有題目，請先至「AI 練習題庫」功能，使用 AI 產生題目或手動建立。');
+      throw new Error('題庫中目前沒有題目，請先至「AI 練習題庫」生成或手動建立題目。');
     }
 
     let examQuestions = [];
 
     if (examType === 'module') {
       if (!moduleId) throw new Error('模組測驗必須指定模組 ID');
-      const moduleQs = allQuestions.filter(q => q.moduleId === moduleId);
+      const moduleQs = allQuestions.filter((q) => q.moduleId === moduleId);
       if (moduleQs.length === 0) {
-        throw new Error(`模組 ${moduleId} 中無可用題目。請先生成該模組的練習題。`);
+        throw new Error(`模組 ${moduleId} 中無可用題目，請先生成該模組的練習題。`);
       }
-      const limit = Math.min(20, moduleQs.length);
-      examQuestions = this._shuffle(moduleQs).slice(0, limit);
+      examQuestions = this._shuffle(moduleQs).slice(0, Math.min(20, moduleQs.length));
     } else {
-      // 全範圍模擬考 (80 題，自 M1~M7 平均抽題)
-      const modules = ['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7'];
+      const modules = typeof MODULE_NAMES !== 'undefined'
+        ? Object.keys(MODULE_NAMES)
+        : ['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'M8', 'M9', 'M10'];
       const targetPerMod = Math.ceil(80 / modules.length);
 
-      modules.forEach(mod => {
-        const modQs = allQuestions.filter(q => q.moduleId === mod);
+      modules.forEach((mod) => {
+        const modQs = allQuestions.filter((q) => q.moduleId === mod);
         if (modQs.length > 0) {
-          const limit = Math.min(targetPerMod, modQs.length);
-          examQuestions = examQuestions.concat(this._shuffle(modQs).slice(0, limit));
+          examQuestions = examQuestions.concat(this._shuffle(modQs).slice(0, Math.min(targetPerMod, modQs.length)));
         }
       });
 
-      // 不足 80 題時，從全題庫補足
       if (examQuestions.length < 80) {
-        const selectedIds = new Set(examQuestions.map(q => q.questionId));
-        const remaining = allQuestions.filter(q => !selectedIds.has(q.questionId));
+        const selectedIds = new Set(examQuestions.map((q) => q.questionId));
+        const remaining = allQuestions.filter((q) => !selectedIds.has(q.questionId));
         const needed = Math.min(80 - examQuestions.length, remaining.length);
         if (needed > 0) {
           examQuestions = examQuestions.concat(this._shuffle(remaining).slice(0, needed));
@@ -385,11 +397,11 @@ const DB = {
       examQuestions = this._shuffle(examQuestions).slice(0, 80);
     }
 
-    // 移除答案與解析，防止作弊
-    return examQuestions.map(q => ({
+    return examQuestions.map((q) => ({
       questionId: q.questionId,
       moduleId: q.moduleId,
       topicId: q.topicId,
+      unitId: q.unitId || '',
       difficulty: q.difficulty,
       questionText: q.questionText,
       optionA: q.optionA,
@@ -403,7 +415,9 @@ const DB = {
   async submitExam(examType, userAnswers, timeSpent, moduleId) {
     const allQuestions = await this.getQuestions();
     const qMap = {};
-    allQuestions.forEach(q => { qMap[q.questionId] = q; });
+    allQuestions.forEach((q) => {
+      qMap[q.questionId] = q;
+    });
 
     let correctCount = 0;
     const totalQuestions = userAnswers.length;
@@ -411,11 +425,12 @@ const DB = {
     const moduleCorrectMap = {};
     const moduleTotalMap = {};
 
-    userAnswers.forEach(ua => {
+    userAnswers.forEach((ua) => {
       const q = qMap[ua.questionId];
       if (!q) return;
 
-      const isCorrect = String(ua.selectedOption).toUpperCase() === String(q.correctAnswer).toUpperCase();
+      const isCorrect = ua.selectedOption &&
+        String(ua.selectedOption).toUpperCase() === String(q.correctAnswer).toUpperCase();
       if (isCorrect) correctCount++;
 
       moduleTotalMap[q.moduleId] = (moduleTotalMap[q.moduleId] || 0) + 1;
@@ -425,6 +440,7 @@ const DB = {
 
       detailedResults.push({
         questionId: q.questionId,
+        unitId: q.unitId || '',
         questionText: q.questionText,
         optionA: q.optionA,
         optionB: q.optionB,
@@ -432,7 +448,7 @@ const DB = {
         optionD: q.optionD,
         userAnswer: ua.selectedOption,
         correctAnswer: q.correctAnswer,
-        isCorrect: isCorrect,
+        isCorrect,
         explanation: q.explanation,
         sourceRef: q.sourceRef,
         moduleId: q.moduleId
@@ -451,14 +467,16 @@ const DB = {
 
     const examId = crypto.randomUUID();
     const examRecord = {
-      examId: examId,
-      examType: examType,
+      examId,
+      examType,
+      moduleId: moduleId || '',
       date: new Date().toISOString().split('T')[0],
-      totalQuestions: totalQuestions,
-      correctCount: correctCount,
-      score: score,
+      totalQuestions,
+      correctCount,
+      score,
       timeSpent: Number(timeSpent),
-      moduleBreakdown: moduleBreakdown,
+      moduleBreakdown,
+      details: detailedResults,
       createdAt: new Date().toISOString()
     };
 
@@ -474,15 +492,7 @@ const DB = {
     localExams.push(examRecord);
     this._setLocal('examResults', localExams);
 
-    return {
-      examId: examId,
-      score: score,
-      correctCount: correctCount,
-      totalQuestions: totalQuestions,
-      timeSpent: timeSpent,
-      moduleBreakdown: moduleBreakdown,
-      details: detailedResults
-    };
+    return examRecord;
   },
 
   async getExamResults() {
@@ -490,7 +500,7 @@ const DB = {
     if (dbInstance && isFirebaseConnected) {
       try {
         const snap = await dbInstance.collection('examResults').get();
-        snap.forEach(doc => data.push(doc.data()));
+        snap.forEach((doc) => data.push(doc.data()));
       } catch (e) {
         console.warn('[DB] 讀取 Firestore 測驗紀錄失敗，使用 LocalStorage:', e);
         data = this._getLocal('examResults') || [];
@@ -499,14 +509,20 @@ const DB = {
       data = this._getLocal('examResults') || [];
     }
 
-    return data.map(row => ({
-      ...row,
-      score: Number(row.score || 0),
-      totalQuestions: Number(row.totalQuestions || 0),
-      correctCount: Number(row.correctCount || 0),
-      timeSpent: Number(row.timeSpent || 0),
-      moduleBreakdown: typeof row.moduleBreakdown === 'string' ? JSON.parse(row.moduleBreakdown) : (row.moduleBreakdown || {})
-    })).sort((a, b) => new Date(b.createdAt || b.date) - new Date(a.createdAt || a.date));
+    return data
+      .map((row) => ({
+        ...row,
+        score: Number(row.score || 0),
+        totalQuestions: Number(row.totalQuestions || 0),
+        correctCount: Number(row.correctCount || 0),
+        timeSpent: Number(row.timeSpent || 0),
+        moduleBreakdown:
+          typeof row.moduleBreakdown === 'string'
+            ? JSON.parse(row.moduleBreakdown || '{}')
+            : (row.moduleBreakdown || {}),
+        details: Array.isArray(row.details) ? row.details : []
+      }))
+      .sort((a, b) => new Date(b.createdAt || b.date) - new Date(a.createdAt || a.date));
   },
 
   // ==========================================
@@ -517,7 +533,7 @@ const DB = {
     if (dbInstance && isFirebaseConnected) {
       try {
         const snap = await dbInstance.collection('reviewCards').get();
-        snap.forEach(doc => cards.push(doc.data()));
+        snap.forEach((doc) => cards.push(doc.data()));
       } catch (e) {
         console.warn('[DB] 讀取 Firestore ReviewCards 失敗，使用 LocalStorage:', e);
         cards = this._getLocal('reviewCards') || [];
@@ -526,7 +542,7 @@ const DB = {
       cards = this._getLocal('reviewCards') || [];
     }
 
-    return cards.map(c => ({
+    return cards.map((c) => ({
       ...c,
       interval: Number(c.interval || 1),
       easeFactor: Number(c.easeFactor || 2.5),
@@ -538,16 +554,16 @@ const DB = {
   async getDueReviewCards() {
     const todayStr = new Date().toISOString().split('T')[0];
     const cards = await this.getReviewCards();
-    return cards.filter(c => !c.nextReviewDate || c.nextReviewDate <= todayStr);
+    return cards.filter((c) => !c.nextReviewDate || c.nextReviewDate <= todayStr);
   },
 
   async addManualReviewCard(moduleId, unitId, front, back) {
     const card = {
       cardId: crypto.randomUUID(),
-      moduleId: moduleId,
+      moduleId,
       unitId: unitId || '',
-      front: front,
-      back: back,
+      front,
+      back,
       interval: 1,
       easeFactor: 2.5,
       nextReviewDate: new Date().toISOString().split('T')[0],
@@ -573,18 +589,13 @@ const DB = {
     if (!cardsArray || cardsArray.length === 0) return true;
     if (dbInstance && isFirebaseConnected) {
       try {
-        const batch = dbInstance.batch();
-        cardsArray.forEach(c => {
-          const ref = dbInstance.collection('reviewCards').doc(c.cardId);
-          batch.set(ref, c);
-        });
-        await batch.commit();
+        await this._batchWriteCollection('reviewCards', cardsArray, 'cardId');
       } catch (e) {
         console.warn('[DB] 批次寫入 Firestore ReviewCards 失敗:', e);
       }
     }
     const local = this._getLocal('reviewCards') || [];
-    cardsArray.forEach(c => local.push(c));
+    cardsArray.forEach((c) => local.push(c));
     this._setLocal('reviewCards', local);
     return true;
   },
@@ -598,7 +609,7 @@ const DB = {
       }
     }
     let local = this._getLocal('reviewCards') || [];
-    local = local.filter(c => c.cardId !== cardId);
+    local = local.filter((c) => c.cardId !== cardId);
     this._setLocal('reviewCards', local);
     return true;
   },
@@ -608,26 +619,21 @@ const DB = {
     if (score < 0 || score > 5) throw new Error('評分必須在 0 到 5 之間');
 
     const cards = await this.getReviewCards();
-    const card = cards.find(c => c.cardId === cardId);
+    const card = cards.find((c) => c.cardId === cardId);
     if (!card) throw new Error('找不到指定的知識卡片: ' + cardId);
 
     let repetitions = card.repetitions;
     let interval = card.interval;
     let easeFactor = card.easeFactor;
 
-    // SuperMemo-2 (SM-2) 間隔重複核心排程演算法
     if (score >= 3) {
-      if (repetitions === 0) {
-        interval = 1;
-      } else if (repetitions === 1) {
-        interval = 6;
-      } else {
-        interval = Math.round(interval * easeFactor);
-      }
+      if (repetitions === 0) interval = 1;
+      else if (repetitions === 1) interval = 6;
+      else interval = Math.round(interval * easeFactor);
       repetitions++;
     } else {
       repetitions = 0;
-      interval = 1; // 答錯，明天立刻複習
+      interval = 1;
     }
 
     easeFactor = easeFactor + (0.1 - (5 - score) * (0.08 + (5 - score) * 0.02));
@@ -637,9 +643,9 @@ const DB = {
     nextDate.setDate(nextDate.getDate() + interval);
 
     const updatedData = {
-      interval: interval,
+      interval,
       easeFactor: Math.round(easeFactor * 100) / 100,
-      repetitions: repetitions,
+      repetitions,
       nextReviewDate: nextDate.toISOString().split('T')[0],
       updatedAt: new Date().toISOString()
     };
@@ -653,7 +659,7 @@ const DB = {
     }
 
     const local = this._getLocal('reviewCards') || [];
-    const cIdx = local.findIndex(c => c.cardId === cardId);
+    const cIdx = local.findIndex((c) => c.cardId === cardId);
     if (cIdx >= 0) {
       local[cIdx] = { ...local[cIdx], ...updatedData };
       this._setLocal('reviewCards', local);
@@ -670,7 +676,7 @@ const DB = {
     if (dbInstance && isFirebaseConnected) {
       try {
         const snap = await dbInstance.collection('oralPractices').get();
-        snap.forEach(doc => data.push(doc.data()));
+        snap.forEach((doc) => data.push(doc.data()));
       } catch (e) {
         console.warn('[DB] 讀取 Firestore OralPractices 失敗，使用 LocalStorage:', e);
         data = this._getLocal('oralPractices') || [];
@@ -679,11 +685,16 @@ const DB = {
       data = this._getLocal('oralPractices') || [];
     }
 
-    return data.map(row => ({
-      ...row,
-      aiScore: Number(row.aiScore || 0),
-      aiFeedback: typeof row.aiFeedback === 'string' ? JSON.parse(row.aiFeedback) : (row.aiFeedback || {})
-    })).sort((a, b) => new Date(b.date || b.createdAt) - new Date(a.date || a.createdAt));
+    return data
+      .map((row) => ({
+        ...row,
+        aiScore: Number(row.aiScore || 0),
+        aiFeedback:
+          typeof row.aiFeedback === 'string'
+            ? JSON.parse(row.aiFeedback || '{}')
+            : (row.aiFeedback || {})
+      }))
+      .sort((a, b) => new Date(b.createdAt || b.date) - new Date(a.createdAt || a.date));
   },
 
   async saveOralPractice(record) {
@@ -708,7 +719,7 @@ const DB = {
     if (dbInstance && isFirebaseConnected) {
       try {
         const snap = await dbInstance.collection('studyLogs').get();
-        snap.forEach(doc => data.push(doc.data()));
+        snap.forEach((doc) => data.push(doc.data()));
       } catch (e) {
         console.warn('[DB] 讀取 Firestore StudyLogs 失敗，使用 LocalStorage:', e);
         data = this._getLocal('studyLogs') || [];
@@ -717,18 +728,20 @@ const DB = {
       data = this._getLocal('studyLogs') || [];
     }
 
-    return data.map(row => ({
-      ...row,
-      minutes: Number(row.minutes || 0),
-      date: row.date || ''
-    })).sort((a, b) => new Date(b.createdAt || b.date) - new Date(a.createdAt || a.date));
+    return data
+      .map((row) => ({
+        ...row,
+        minutes: Number(row.minutes || 0),
+        date: row.date || ''
+      }))
+      .sort((a, b) => new Date(b.createdAt || b.date) - new Date(a.createdAt || a.date));
   },
 
   async addManualStudyLog(unitId, minutes, journalEntry) {
     const today = new Date().toISOString().split('T')[0];
     const logId = crypto.randomUUID();
     const record = {
-      logId: logId,
+      logId,
       date: today,
       unitId: unitId || 'General',
       minutes: Number(minutes || 0),
@@ -757,31 +770,31 @@ const DB = {
     const progressList = await this.getProgress();
     const logs = await this.getStudyLogs();
     const examResults = await this.getExamResults();
-    const dueCards = await this.getDueReviewCards();
+    const allCards = await this.getReviewCards();
+    const todayStr = new Date().toISOString().split('T')[0];
+    const dueCards = allCards.filter((c) => !c.nextReviewDate || c.nextReviewDate <= todayStr);
 
     const examDateStr = (await this.getConfig('examDate')) || '2027-10-01';
     const dailyGoal = Number((await this.getConfig('dailyGoalMinutes')) || 45);
 
-    // 1. 考試倒數天數
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const examDate = new Date(examDateStr);
     examDate.setHours(0, 0, 0, 0);
-    const timeDiff = examDate.getTime() - today.getTime();
-    const daysRemaining = Math.max(0, Math.ceil(timeDiff / (1000 * 3600 * 24)));
+    const daysRemaining = Math.max(0, Math.ceil((examDate.getTime() - today.getTime()) / (1000 * 3600 * 24)));
 
-    // 2. 總體進度計算
     const totalUnits = progressList.length;
-    const completedUnits = progressList.filter(p => p.status === 'completed').length;
-    const inProgressUnits = progressList.filter(p => p.status === 'in_progress').length;
+    const completedUnits = progressList.filter((p) => p.status === 'completed').length;
+    const inProgressUnits = progressList.filter((p) => p.status === 'in_progress').length;
     const overallProgressPercent = totalUnits > 0 ? Math.round((completedUnits / totalUnits) * 100) : 0;
 
-    // 3. 模組細部進度
     const moduleProgress = {};
-    const modules = ['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'M8', 'M9', 'M10'];
-    modules.forEach(mId => {
-      const modUnits = progressList.filter(p => p.moduleId === mId);
-      const modCompleted = modUnits.filter(p => p.status === 'completed').length;
+    const modules = typeof MODULE_NAMES !== 'undefined'
+      ? Object.keys(MODULE_NAMES)
+      : ['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'M8', 'M9', 'M10'];
+    modules.forEach((mId) => {
+      const modUnits = progressList.filter((p) => p.moduleId === mId);
+      const modCompleted = modUnits.filter((p) => p.status === 'completed').length;
       moduleProgress[mId] = {
         name: MODULE_NAMES[mId] || mId,
         total: modUnits.length,
@@ -790,25 +803,27 @@ const DB = {
       };
     });
 
-    // 4. 累計時數與連續學習天數 (Streak)
     let totalMinutes = 0;
-    logs.forEach(log => { totalMinutes += log.minutes; });
+    let todayMinutes = 0;
+    logs.forEach((log) => {
+      totalMinutes += log.minutes;
+      if (log.date === todayStr) todayMinutes += log.minutes;
+    });
 
-    const uniqueDates = [...new Set(logs.map(l => l.date))].sort((a, b) => new Date(b) - new Date(a));
+    const uniqueDates = [...new Set(logs.map((l) => l.date))].sort((a, b) => new Date(b) - new Date(a));
     let streak = 0;
-    let checkDate = new Date();
+    const checkDate = new Date();
     checkDate.setHours(0, 0, 0, 0);
-
-    const todayStr = checkDate.toISOString().split('T')[0];
+    const todayDateStr = checkDate.toISOString().split('T')[0];
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
     const yesterdayStr = yesterday.toISOString().split('T')[0];
 
-    const hasToday = uniqueDates.includes(todayStr);
+    const hasToday = uniqueDates.includes(todayDateStr);
     const hasYesterday = uniqueDates.includes(yesterdayStr);
 
     if (hasToday || hasYesterday) {
-      let currentCheck = hasToday ? checkDate : yesterday;
+      const currentCheck = hasToday ? checkDate : yesterday;
       while (true) {
         const currentStr = currentCheck.toISOString().split('T')[0];
         if (uniqueDates.includes(currentStr)) {
@@ -820,7 +835,6 @@ const DB = {
       }
     }
 
-    // 5. 過去 7 日每日學習時數
     const last7Days = [];
     for (let i = 6; i >= 0; i--) {
       const d = new Date();
@@ -828,16 +842,17 @@ const DB = {
       last7Days.push(d.toISOString().split('T')[0]);
     }
 
-    const weeklyDailyMinutes = last7Days.map(dateStr => {
-      const sum = logs.filter(l => l.date === dateStr).reduce((acc, log) => acc + log.minutes, 0);
+    const weeklyDailyMinutes = last7Days.map((dateStr) => {
+      const sum = logs.filter((l) => l.date === dateStr).reduce((acc, log) => acc + log.minutes, 0);
       return { date: dateStr.substring(5), minutes: sum };
     });
 
-    // 6. 最近測驗平均成績
+    const weeklyTotalMinutes = weeklyDailyMinutes.reduce((acc, d) => acc + d.minutes, 0);
     const recentExams = examResults.slice(0, 5);
-    const averageExamScore = recentExams.length > 0
-      ? Math.round(recentExams.reduce((acc, r) => acc + r.score, 0) / recentExams.length)
-      : 0;
+    const averageExamScore =
+      recentExams.length > 0
+        ? Math.round(recentExams.reduce((acc, r) => acc + r.score, 0) / recentExams.length)
+        : 0;
 
     return {
       daysRemaining,
@@ -847,12 +862,353 @@ const DB = {
       inProgressUnits,
       moduleProgress,
       totalHours: Math.round((totalMinutes / 60) * 10) / 10,
+      todayMinutes,
+      weeklyTotalMinutes,
       streak,
       weeklyDailyMinutes,
       averageExamScore,
       dueReviewCardsCount: dueCards.length,
+      totalReviewCardsCount: allCards.length,
       dailyGoalMinutes: dailyGoal
     };
+  },
+
+  // ==========================================
+  // Firebase 資料庫搬移引擎 (Ponytail 共用批次寫入核心)
+  // ==========================================
+  async _batchWriteCollection(colName, items, idKey) {
+    if (!dbInstance || !items || items.length === 0) return 0;
+    const chunks = this._chunkArray(items, 400);
+    for (const chunk of chunks) {
+      const batch = dbInstance.batch();
+      chunk.forEach((item) => {
+        const id = String(item[idKey] || crypto.randomUUID());
+        const ref = dbInstance.collection(colName).doc(id);
+        batch.set(ref, item, { merge: true });
+      });
+      await batch.commit();
+    }
+    return items.length;
+  },
+
+  _normalizeDataset(raw) {
+    const normalized = {
+      config: DEFAULT_CONFIGS,
+      syllabus: DEFAULT_SYLLABUS,
+      progress: [],
+      questions: [],
+      reviewCards: [],
+      examResults: [],
+      oralPractices: [],
+      studyLogs: []
+    };
+
+    if (Array.isArray(raw.config)) {
+      const cfg = { ...DEFAULT_CONFIGS };
+      raw.config.forEach((row) => {
+        if (row.key) cfg[row.key] = row.value !== undefined ? String(row.value) : '';
+      });
+      normalized.config = cfg;
+    } else if (raw.config && typeof raw.config === 'object') {
+      normalized.config = { ...DEFAULT_CONFIGS, ...raw.config };
+    }
+
+    if (Array.isArray(raw.syllabus) && raw.syllabus.length > 0) {
+      normalized.syllabus = raw.syllabus.map((u, idx) => ({
+        ...u,
+        plannedWeek: Number(u.plannedWeek || idx + 1),
+        estimatedMinutes: Number(u.estimatedMinutes || 180),
+        orderIndex: Number(u.orderIndex || idx + 1)
+      }));
+    }
+
+    if (Array.isArray(raw.progress)) {
+      normalized.progress = raw.progress
+        .filter((p) => p.unitId)
+        .map((p) => ({
+          unitId: String(p.unitId),
+          status: p.status || 'not_started',
+          startDate: p.startDate || '',
+          completeDate: p.completeDate || '',
+          totalMinutes: Number(p.totalMinutes || 0),
+          notes: p.notes || '',
+          updatedAt: p.updatedAt || new Date().toISOString()
+        }));
+    }
+
+    if (Array.isArray(raw.questions)) {
+      normalized.questions = raw.questions.map((q) => ({
+        ...q,
+        questionId: String(q.questionId || crypto.randomUUID()),
+        difficulty: Number(q.difficulty || 2),
+        verified: q.verified === true || String(q.verified).toUpperCase() === 'TRUE'
+      }));
+    }
+
+    if (Array.isArray(raw.reviewCards)) {
+      normalized.reviewCards = raw.reviewCards.map((c) => ({
+        ...c,
+        cardId: String(c.cardId || crypto.randomUUID()),
+        interval: Number(c.interval || 1),
+        easeFactor: Number(c.easeFactor || 2.5),
+        repetitions: Number(c.repetitions || 0),
+        nextReviewDate: c.nextReviewDate || new Date().toISOString().split('T')[0]
+      }));
+    }
+
+    if (Array.isArray(raw.examResults)) {
+      normalized.examResults = raw.examResults.map((r) => ({
+        ...r,
+        examId: String(r.examId || crypto.randomUUID()),
+        totalQuestions: Number(r.totalQuestions || 0),
+        correctCount: Number(r.correctCount || 0),
+        score: Number(r.score || 0),
+        timeSpent: Number(r.timeSpent || 0),
+        moduleBreakdown:
+          typeof r.moduleBreakdown === 'string'
+            ? JSON.parse(r.moduleBreakdown || '{}')
+            : (r.moduleBreakdown || {})
+      }));
+    }
+
+    if (Array.isArray(raw.oralPractices)) {
+      normalized.oralPractices = raw.oralPractices.map((o) => ({
+        ...o,
+        practiceId: String(o.practiceId || crypto.randomUUID()),
+        aiScore: Number(o.aiScore || 0),
+        aiFeedback:
+          typeof o.aiFeedback === 'string'
+            ? (() => { try { return JSON.parse(o.aiFeedback); } catch (e) { return { feedback: o.aiFeedback }; } })()
+            : (o.aiFeedback || {})
+      }));
+    }
+
+    if (Array.isArray(raw.studyLogs)) {
+      normalized.studyLogs = raw.studyLogs.map((l) => ({
+        ...l,
+        logId: String(l.logId || crypto.randomUUID()),
+        minutes: Number(l.minutes || 0),
+        date: l.date || new Date().toISOString().split('T')[0],
+        unitId: l.unitId || 'General',
+        journalEntry: l.journalEntry || ''
+      }));
+    }
+
+    return normalized;
+  },
+
+  async syncToFirestore(rawData) {
+    const data = this._normalizeDataset(rawData);
+
+    // 1. 先寫入 LocalStorage 保障即時可用
+    this._setLocal('config', data.config);
+    this._setLocal('syllabus', data.syllabus);
+    this._setLocal('progress', data.progress);
+    this._setLocal('questions', data.questions);
+    this._setLocal('reviewCards', data.reviewCards);
+    this._setLocal('examResults', data.examResults);
+    this._setLocal('oralPractices', data.oralPractices);
+    this._setLocal('studyLogs', data.studyLogs);
+
+    if (!dbInstance || !isFirebaseConnected) {
+      throw new Error('尚未連線至 Firebase Firestore，僅儲存於本機 LocalStorage');
+    }
+
+    await dbInstance.collection('config').doc('settings').set(data.config, { merge: true });
+    await this._batchWriteCollection('syllabus', data.syllabus, 'unitId');
+    await this._batchWriteCollection('progress', data.progress, 'unitId');
+    await this._batchWriteCollection('questions', data.questions, 'questionId');
+    await this._batchWriteCollection('reviewCards', data.reviewCards, 'cardId');
+    await this._batchWriteCollection('examResults', data.examResults, 'examId');
+    await this._batchWriteCollection('oralPractices', data.oralPractices, 'practiceId');
+    await this._batchWriteCollection('studyLogs', data.studyLogs, 'logId');
+
+    return {
+      syllabus: data.syllabus.length,
+      progress: data.progress.length,
+      questions: data.questions.length,
+      reviewCards: data.reviewCards.length,
+      examResults: data.examResults.length,
+      oralPractices: data.oralPractices.length,
+      studyLogs: data.studyLogs.length
+    };
+  },
+
+  /**
+   * 路徑 1：將本機 LocalStorage 所有資料推送至 Firebase
+   */
+  async pushLocalToFirebase() {
+    const probe = await verifyFirebaseConnection();
+    if (!probe.connected) {
+      throw new Error(probe.reason || '無法連線至 Firebase Firestore');
+    }
+
+    const localData = {
+      config: this._getLocal('config') || DEFAULT_CONFIGS,
+      syllabus: this._getLocal('syllabus') || DEFAULT_SYLLABUS,
+      progress: this._getLocal('progress') || [],
+      questions: this._getLocal('questions') || [],
+      reviewCards: this._getLocal('reviewCards') || [],
+      examResults: this._getLocal('examResults') || [],
+      oralPractices: this._getLocal('oralPractices') || [],
+      studyLogs: this._getLocal('studyLogs') || []
+    };
+
+    const counts = await this.syncToFirestore(localData);
+    return { success: true, counts };
+  },
+
+  /**
+   * 路徑 2：從 Firebase Firestore 下載最新資料至本機 LocalStorage
+   */
+  async pullFirebaseToLocal() {
+    const probe = await verifyFirebaseConnection();
+    if (!probe.connected || !dbInstance) {
+      throw new Error(probe.reason || '無法連線至 Firebase Firestore');
+    }
+
+    const fetchCol = async (name) => {
+      const snap = await dbInstance.collection(name).get();
+      const arr = [];
+      snap.forEach((doc) => arr.push(doc.data()));
+      return arr;
+    };
+
+    const configDoc = await dbInstance.collection('config').doc('settings').get();
+    const config = configDoc.exists ? { ...DEFAULT_CONFIGS, ...configDoc.data() } : DEFAULT_CONFIGS;
+
+    const [syllabus, progress, questions, reviewCards, examResults, oralPractices, studyLogs] =
+      await Promise.all([
+        fetchCol('syllabus'),
+        fetchCol('progress'),
+        fetchCol('questions'),
+        fetchCol('reviewCards'),
+        fetchCol('examResults'),
+        fetchCol('oralPractices'),
+        fetchCol('studyLogs')
+      ]);
+
+    this._setLocal('config', config);
+    if (syllabus.length > 0) this._setLocal('syllabus', syllabus);
+    this._setLocal('progress', progress);
+    this._setLocal('questions', questions);
+    this._setLocal('reviewCards', reviewCards);
+    this._setLocal('examResults', examResults);
+    this._setLocal('oralPractices', oralPractices);
+    this._setLocal('studyLogs', studyLogs);
+
+    return {
+      success: true,
+      counts: {
+        syllabus: syllabus.length,
+        progress: progress.length,
+        questions: questions.length,
+        reviewCards: reviewCards.length,
+        examResults: examResults.length,
+        oralPractices: oralPractices.length,
+        studyLogs: studyLogs.length
+      }
+    };
+  },
+
+  /**
+   * 路徑 3：從舊版 Google Sheet 免後端直連遷移至 Firebase
+   */
+  async migrateFromGoogleSheet(sheetIdOrUrl) {
+    const raw = (sheetIdOrUrl || LEGACY_GSHEET_ID).trim();
+    const idMatch = raw.match(/\/d\/([a-zA-Z0-9-_]+)/);
+    const sheetId = idMatch ? idMatch[1] : raw;
+    if (!sheetId) throw new Error('請輸入有效的 Google Sheet ID 或試算表網址');
+
+    const probe = await verifyFirebaseConnection();
+    if (!probe.connected) {
+      throw new Error('請先完成 Firebase 連線設定，再執行試算表搬移：' + (probe.reason || ''));
+    }
+
+    const sheetsMap = {
+      Syllabus: 'syllabus',
+      Progress: 'progress',
+      Questions: 'questions',
+      StudyLog: 'studyLogs',
+      ReviewCards: 'reviewCards',
+      ExamResults: 'examResults',
+      OralPractice: 'oralPractices',
+      Config: 'config'
+    };
+
+    const fetchSheetRows = async (sheetName) => {
+      const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`無法讀取工作表 ${sheetName} (HTTP ${res.status})`);
+      const text = await res.text();
+      const jsonMatch = text.match(/setResponse\(([\s\S]*)\);?$/);
+      if (!jsonMatch) {
+        throw new Error(`試算表 ${sheetName} 未開放檢視權限（請暫時設為「知道連結的任何人可檢視」）`);
+      }
+      const parsed = JSON.parse(jsonMatch[1]);
+      if (parsed.status === 'error') {
+        return [];
+      }
+      const cols = (parsed.table.cols || []).map((c) => (c.label || c.id || '').trim());
+      const rows = parsed.table.rows || [];
+      return rows.map((r) => {
+        const obj = {};
+        (r.c || []).forEach((cell, idx) => {
+          const key = cols[idx];
+          if (!key) return;
+          let val = cell ? (cell.f !== undefined && cell.v instanceof Object ? cell.f : cell.v) : '';
+          if (typeof val === 'string' && val.startsWith('Date(')) {
+            const nums = val.match(/\d+/g);
+            if (nums && nums.length >= 3) {
+              const y = nums[0];
+              const m = String(Number(nums[1]) + 1).padStart(2, '0');
+              const d = String(nums[2]).padStart(2, '0');
+              val = `${y}-${m}-${d}`;
+            }
+          }
+          obj[key] = val === null || val === undefined ? '' : val;
+        });
+        return obj;
+      });
+    };
+
+    const dataset = {};
+    for (const [sheetName, targetKey] of Object.entries(sheetsMap)) {
+      dataset[targetKey] = await fetchSheetRows(sheetName);
+    }
+
+    const counts = await this.syncToFirestore(dataset);
+    return { success: true, counts };
+  },
+
+  /**
+   * 取得本機 vs. Firebase 雲端筆數統計
+   */
+  async getStorageStats() {
+    const local = {
+      progress: (this._getLocal('progress') || []).length,
+      questions: (this._getLocal('questions') || []).length,
+      reviewCards: (this._getLocal('reviewCards') || []).length,
+      examResults: (this._getLocal('examResults') || []).length,
+      oralPractices: (this._getLocal('oralPractices') || []).length,
+      studyLogs: (this._getLocal('studyLogs') || []).length
+    };
+
+    let cloud = null;
+    if (dbInstance && isFirebaseConnected) {
+      try {
+        const cols = ['progress', 'questions', 'reviewCards', 'examResults', 'oralPractices', 'studyLogs'];
+        const snaps = await Promise.all(cols.map((c) => dbInstance.collection(c).get()));
+        cloud = {};
+        cols.forEach((c, i) => {
+          cloud[c] = snaps[i].size;
+        });
+      } catch (e) {
+        cloud = null;
+      }
+    }
+
+    return { local, cloud };
   },
 
   // ==========================================
@@ -860,11 +1216,11 @@ const DB = {
   // ==========================================
   async exportAllDataJSON() {
     const backup = {
-      version: '2.0',
+      version: '3.0',
       exportedAt: new Date().toISOString(),
-      config: (this._getLocal('config') || DEFAULT_CONFIGS),
+      config: await this.getAllConfig(),
       syllabus: await this.getSyllabus(),
-      progress: this._getLocal('progress') || [],
+      progress: await this.getRawProgressRecords(),
       questions: await this.getQuestions(),
       reviewCards: await this.getReviewCards(),
       examResults: await this.getExamResults(),
@@ -881,46 +1237,21 @@ const DB = {
         throw new Error('備份檔案格式不正確 (找不到 syllabus 資料)');
       }
 
-      // 寫入 LocalStorage
-      if (data.config) this._setLocal('config', data.config);
-      if (data.syllabus) this._setLocal('syllabus', data.syllabus);
-      if (data.progress) this._setLocal('progress', data.progress);
-      if (data.questions) this._setLocal('questions', data.questions);
-      if (data.reviewCards) this._setLocal('reviewCards', data.reviewCards);
-      if (data.examResults) this._setLocal('examResults', data.examResults);
-      if (data.oralPractices) this._setLocal('oralPractices', data.oralPractices);
-      if (data.studyLogs) this._setLocal('studyLogs', data.studyLogs);
-
-      // 若有連線 Firestore，批次同步寫入
       if (dbInstance && isFirebaseConnected) {
-        console.log('[DB] 開始將還原資料同步至 Firestore...');
-        if (data.config) await dbInstance.collection('config').doc('settings').set(data.config);
-        
-        // 分批寫入 questions / reviewCards / progress / syllabus
-        const syncCollection = async (colName, items, idKey) => {
-          if (!items || items.length === 0) return;
-          const chunks = this._chunkArray(items, 400);
-          for (const chunk of chunks) {
-            const batch = dbInstance.batch();
-            chunk.forEach(item => {
-              const id = item[idKey] || crypto.randomUUID();
-              const ref = dbInstance.collection(colName).doc(id);
-              batch.set(ref, item);
-            });
-            await batch.commit();
-          }
-        };
-
-        await syncCollection('syllabus', data.syllabus, 'unitId');
-        await syncCollection('progress', data.progress || [], 'unitId');
-        await syncCollection('questions', data.questions || [], 'questionId');
-        await syncCollection('reviewCards', data.reviewCards || [], 'cardId');
-        await syncCollection('examResults', data.examResults || [], 'examId');
-        await syncCollection('oralPractices', data.oralPractices || [], 'practiceId');
-        await syncCollection('studyLogs', data.studyLogs || [], 'logId');
+        const counts = await this.syncToFirestore(data);
+        return { success: true, message: `已完整還原並同步至 Firebase (${counts.questions} 題庫 / ${counts.reviewCards} 閃卡)` };
+      } else {
+        const normalized = this._normalizeDataset(data);
+        this._setLocal('config', normalized.config);
+        this._setLocal('syllabus', normalized.syllabus);
+        this._setLocal('progress', normalized.progress);
+        this._setLocal('questions', normalized.questions);
+        this._setLocal('reviewCards', normalized.reviewCards);
+        this._setLocal('examResults', normalized.examResults);
+        this._setLocal('oralPractices', normalized.oralPractices);
+        this._setLocal('studyLogs', normalized.studyLogs);
+        return { success: true, message: '資料庫已成功還原至本機儲存！' };
       }
-
-      return { success: true, message: '資料庫已成功完整還原！' };
     } catch (e) {
       throw new Error('還原失敗: ' + e.message);
     }

@@ -1,68 +1,121 @@
 /**
  * 醫學物理師考照自學系統 - 計時器管理 (js/timer.js)
- * 包含學習懸浮計時器 (StudyTimer) 與模擬測驗倒數計時器 (ExamTimer)
+ * 使用真實時間戳差值 (Date.now) 防範瀏覽器背景分頁節流，並支援 sessionStorage 持久化與 <dialog> 連動
  */
+
+const TIMER_STORAGE_KEY = 'mp_active_study_timer';
 
 const StudyTimer = {
   intervalId: null,
-  startTime: null,
-  elapsedSeconds: 0,
+  accumulatedMs: 0,
+  lastResumeAt: null,
   isPaused: false,
   currentUnitId: null,
   currentUnitName: null,
 
+  _getElapsedSeconds() {
+    const runningMs = !this.isPaused && this.lastResumeAt ? Date.now() - this.lastResumeAt : 0;
+    return Math.floor((this.accumulatedMs + runningMs) / 1000);
+  },
+
+  _persistState() {
+    if (!this.currentUnitId) {
+      sessionStorage.removeItem(TIMER_STORAGE_KEY);
+      return;
+    }
+    sessionStorage.setItem(
+      TIMER_STORAGE_KEY,
+      JSON.stringify({
+        unitId: this.currentUnitId,
+        unitName: this.currentUnitName,
+        accumulatedMs: this.accumulatedMs,
+        lastResumeAt: this.lastResumeAt,
+        isPaused: this.isPaused
+      })
+    );
+  },
+
+  restoreIfRunning() {
+    try {
+      const raw = sessionStorage.getItem(TIMER_STORAGE_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      if (!saved || !saved.unitId) return;
+
+      this.currentUnitId = saved.unitId;
+      this.currentUnitName = saved.unitName;
+      this.accumulatedMs = Number(saved.accumulatedMs || 0);
+      this.lastResumeAt = saved.lastResumeAt || null;
+      this.isPaused = !!saved.isPaused;
+      this._mountUI();
+      this._startTicker();
+    } catch (e) {}
+  },
+
   start(unitId, unitName) {
-    if (this.intervalId) {
-      showToast('已有其他單元正在進行計時！', 'warning');
+    if (this.currentUnitId) {
+      showToast('已有其他單元正在進行計時', 'warning');
       return;
     }
 
     this.currentUnitId = unitId;
     this.currentUnitName = unitName;
-    this.startTime = new Date();
-    this.elapsedSeconds = 0;
+    this.accumulatedMs = 0;
+    this.lastResumeAt = Date.now();
     this.isPaused = false;
 
-    // 顯示浮動計時面版
-    const nameEl = document.getElementById('timer-unit-name');
-    const floatEl = document.getElementById('floating-timer');
-    if (nameEl) nameEl.innerText = unitName;
-    if (floatEl) floatEl.style.display = 'flex';
-    this.updateDisplay();
-
-    // 綁定控制按鈕事件
-    const btnPause = document.getElementById('btn-timer-pause');
-    const btnStop = document.getElementById('btn-timer-stop');
-    if (btnPause) btnPause.onclick = () => this.togglePause();
-    if (btnStop) btnStop.onclick = () => this.stopAndSave();
-
-    this.intervalId = setInterval(() => {
-      if (!this.isPaused) {
-        this.elapsedSeconds++;
-        this.updateDisplay();
-      }
-    }, 1000);
-
+    this._persistState();
+    this._mountUI();
+    this._startTicker();
     showToast(`開始學習：${unitName}`, 'info');
   },
 
-  togglePause() {
-    this.isPaused = !this.isPaused;
-    const btn = document.getElementById('btn-timer-pause');
-    if (!btn) return;
-    if (this.isPaused) {
-      btn.innerHTML = '<span class="material-icons-round" style="font-size: 1rem;">play_arrow</span>';
-      showToast('計時暫停', 'info');
-    } else {
-      btn.innerHTML = '<span class="material-icons-round" style="font-size: 1rem;">pause</span>';
-      showToast('計時恢復', 'info');
+  _mountUI() {
+    const nameEl = document.getElementById('timer-unit-name');
+    const floatEl = document.getElementById('floating-timer');
+    const btnPause = document.getElementById('btn-timer-pause');
+    const btnStop = document.getElementById('btn-timer-stop');
+
+    if (nameEl) nameEl.innerText = this.currentUnitName;
+    if (floatEl) floatEl.style.display = 'flex';
+    if (btnPause) {
+      btnPause.innerHTML = `<span class="material-icons-round" style="font-size: 16px;">${
+        this.isPaused ? 'play_arrow' : 'pause'
+      }</span>`;
+      btnPause.onclick = () => this.togglePause();
     }
+    if (btnStop) btnStop.onclick = () => this.stopAndSave();
+    this.updateDisplay();
+  },
+
+  _startTicker() {
+    if (this.intervalId) clearInterval(this.intervalId);
+    this.intervalId = setInterval(() => {
+      if (!this.isPaused) {
+        this.updateDisplay();
+      }
+    }, 1000);
+  },
+
+  togglePause() {
+    if (!this.currentUnitId) return;
+    if (!this.isPaused) {
+      this.accumulatedMs += this.lastResumeAt ? Date.now() - this.lastResumeAt : 0;
+      this.lastResumeAt = null;
+      this.isPaused = true;
+    } else {
+      this.lastResumeAt = Date.now();
+      this.isPaused = false;
+    }
+    this._persistState();
+    this._mountUI();
   },
 
   updateDisplay() {
-    const hrs = Math.floor(this.elapsedSeconds / 3600);
-    const mins = Math.floor((this.elapsedSeconds % 3600) / 60);
-    const secs = this.elapsedSeconds % 60;
+    const totalSecs = this._getElapsedSeconds();
+    const hrs = Math.floor(totalSecs / 3600);
+    const mins = Math.floor((totalSecs % 3600) / 60);
+    const secs = totalSecs % 60;
 
     const formatted = [
       String(hrs).padStart(2, '0'),
@@ -74,47 +127,46 @@ const StudyTimer = {
     if (timeEl) timeEl.innerText = formatted;
   },
 
-  async stopAndSave() {
-    clearInterval(this.intervalId);
+  reset() {
+    if (this.intervalId) clearInterval(this.intervalId);
     this.intervalId = null;
+    this.currentUnitId = null;
+    this.currentUnitName = null;
+    this.accumulatedMs = 0;
+    this.lastResumeAt = null;
+    this.isPaused = false;
+    sessionStorage.removeItem(TIMER_STORAGE_KEY);
     const floatEl = document.getElementById('floating-timer');
     if (floatEl) floatEl.style.display = 'none';
+  },
 
-    const elapsedMinutes = Math.max(1, Math.round(this.elapsedSeconds / 60));
-
-    const confirmSave = confirm(`學習結束！本次累計研讀 ${elapsedMinutes} 分鐘。\n是否要將此時數記入 [${this.currentUnitName}] 的進度？`);
-
-    if (confirmSave) {
-      const notes = prompt('請輸入本次學習筆記心得（選填）：', '');
-      const status = confirm('是否要將本單元標記為「已完成」(Completed)？\n(取消則標記為「進行中」)') ? 'completed' : 'in_progress';
-
-      try {
-        showToast('正在儲存研讀進度...', 'info');
-        await DB.updateProgress(this.currentUnitId, status, elapsedMinutes, notes || '');
-        showToast('學習進度已成功儲存！', 'success');
-
-        // 重新整理當前頁面資料
-        if (window.location.hash === '#syllabus') {
-          loadSyllabusPage();
-        } else if (window.location.hash === '#dashboard' || !window.location.hash) {
-          loadDashboardPage();
-        }
-      } catch (err) {
-        showToast('進度儲存失敗：' + err.message, 'error');
-      }
-    } else {
-      showToast('計時已取消，未儲存時數', 'warning');
+  async stopAndSave() {
+    if (!this.currentUnitId) return;
+    // 先凍結時間，若使用者取消儲存則保留計時狀態可繼續
+    if (!this.isPaused) {
+      this.togglePause();
     }
+    const elapsedMinutes = Math.max(1, Math.round(this._getElapsedSeconds() / 60));
+    const unitId = this.currentUnitId;
+
+    const progressList = await DB.getProgress();
+    const existing = progressList.find((p) => p.unitId === unitId);
+    const defaultStatus = existing && existing.status === 'completed' ? 'completed' : 'in_progress';
+
+    openProgressModal(unitId, defaultStatus, existing ? existing.notes : '', elapsedMinutes, () => {
+      this.reset();
+    });
   }
 };
 
 /**
- * 模擬測驗倒數計時器
+ * 模擬測驗倒數計時器（同樣採用真實時間戳，避免切換視窗計時飄移）
  */
 class ExamTimer {
   constructor(durationSeconds, onTick, onTimeUp) {
     this.duration = durationSeconds;
     this.elapsed = 0;
+    this.startTime = null;
     this.onTick = onTick;
     this.onTimeUp = onTimeUp;
     this.intervalId = null;
@@ -122,10 +174,11 @@ class ExamTimer {
   }
 
   start() {
+    this.startTime = Date.now();
     this.intervalId = setInterval(() => {
       if (this.isStopped) return;
-      this.elapsed++;
-      const remaining = this.duration - this.elapsed;
+      this.elapsed = Math.floor((Date.now() - this.startTime) / 1000);
+      const remaining = Math.max(0, this.duration - this.elapsed);
 
       if (this.onTick) this.onTick(remaining, this.elapsed);
 
@@ -133,11 +186,14 @@ class ExamTimer {
         this.stop();
         if (this.onTimeUp) this.onTimeUp();
       }
-    }, 1000);
+    }, 500);
   }
 
   stop() {
     this.isStopped = true;
+    if (this.startTime) {
+      this.elapsed = Math.floor((Date.now() - this.startTime) / 1000);
+    }
     if (this.intervalId) {
       clearInterval(this.intervalId);
       this.intervalId = null;

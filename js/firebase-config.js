@@ -1,21 +1,50 @@
 /**
  * 醫學物理師考照自學系統 - Firebase 初始化與配置 (firebase-config.js)
- * 支援由使用者在前端「系統設定」動態配置 Firebase 專案，
- * 並在未配置時自動降級至 LocalStorage 模擬持久化模式，確保開箱即用。
+ * 支援整段 firebaseConfig 智慧貼上、真實雲端連線探針與 LocalStorage 自動降級
  */
 
-// 預設 Firebase 設定（可替換為您的正式專案設定）
 const DEFAULT_FIREBASE_CONFIG = {
-  apiKey: "",
-  authDomain: "",
-  projectId: "",
-  storageBucket: "",
-  messagingSenderId: "",
-  appId: ""
+  apiKey: '',
+  authDomain: '',
+  projectId: '',
+  storageBucket: '',
+  messagingSenderId: '',
+  appId: ''
 };
 
 let dbInstance = null;
 let isFirebaseConnected = false;
+let firebaseConnectionError = '';
+
+/**
+ * 解析使用者貼上的整段 firebaseConfig JS 物件或 JSON 字串
+ */
+function parseFirebaseConfigInput(rawText) {
+  if (!rawText || typeof rawText !== 'string') return null;
+  const text = rawText.trim();
+  const keys = ['apiKey', 'authDomain', 'projectId', 'storageBucket', 'messagingSenderId', 'appId'];
+  const extracted = {};
+  let foundCount = 0;
+
+  keys.forEach((key) => {
+    const regex = new RegExp(`["']?${key}["']?\\s*:\\s*["']([^"']+)["']`);
+    const match = text.match(regex);
+    if (match && match[1]) {
+      extracted[key] = match[1].trim();
+      foundCount++;
+    }
+  });
+
+  if (foundCount >= 2 && extracted.projectId && extracted.apiKey) {
+    return {
+      ...DEFAULT_FIREBASE_CONFIG,
+      ...extracted,
+      authDomain: extracted.authDomain || `${extracted.projectId}.firebaseapp.com`,
+      storageBucket: extracted.storageBucket || `${extracted.projectId}.appspot.com`
+    };
+  }
+  return null;
+}
 
 /**
  * 取得當前使用的 Firebase 配置
@@ -39,7 +68,7 @@ function getActiveFirebaseConfig() {
  * 儲存自訂 Firebase 配置
  */
 function saveCustomFirebaseConfig(configObj) {
-  if (!configObj || !configObj.projectId) {
+  if (!configObj || !configObj.projectId || !configObj.apiKey) {
     localStorage.removeItem('mp_custom_firebase_config');
     return false;
   }
@@ -48,20 +77,19 @@ function saveCustomFirebaseConfig(configObj) {
 }
 
 /**
- * 初始化 Firebase 與 Firestore 連線
+ * 初始化 Firebase SDK 與 Firestore 實例
  */
 function initFirebaseApp() {
   const config = getActiveFirebaseConfig();
-  
+  firebaseConnectionError = '';
+
   if (typeof firebase === 'undefined') {
-    console.warn('[Firebase] Firebase SDK 尚未載入，使用 LocalStorage 離線模式。');
     isFirebaseConnected = false;
+    firebaseConnectionError = 'Firebase SDK 尚未載入';
     return null;
   }
 
-  // 若尚未設定有效 Project ID，使用 LocalStorage 離線模式
   if (!config.projectId || !config.apiKey) {
-    console.info('[Firebase] 未偵測到 Firebase Project ID / API Key，系統將使用瀏覽器本機 LocalStorage 運行。');
     isFirebaseConnected = false;
     return null;
   }
@@ -71,25 +99,63 @@ function initFirebaseApp() {
       firebase.initializeApp(config);
     }
     const db = firebase.firestore();
-    
-    // 啟用 Firestore 離線持久化快取 (IndexedDB)
+
     try {
-      db.enablePersistence({ synchronizeTabs: true }).catch(err => {
+      db.enablePersistence({ synchronizeTabs: true }).catch((err) => {
         if (err.code === 'failed-precondition') {
-          console.warn('[Firestore] 多個分頁同時開啟，離線快取僅在首個分頁啟用');
-        } else if (err.code === 'unimplemented') {
-          console.warn('[Firestore] 瀏覽器不支援 IndexedDB 離線持久化');
+          console.warn('[Firestore] 多分頁開啟中，離線快取僅於首個分頁啟用');
         }
       });
-    } catch(e) {}
+    } catch (e) {}
 
     dbInstance = db;
     isFirebaseConnected = true;
-    console.log('[Firebase] 成功連接至 Firestore 專案:', config.projectId);
     return db;
   } catch (err) {
     console.error('[Firebase] 初始化失敗:', err);
     isFirebaseConnected = false;
+    firebaseConnectionError = err.message || '初始化失敗';
     return null;
+  }
+}
+
+/**
+ * 主動對 Firestore Server 發起真實連線探針（檢查 Project ID 與 Security Rules）
+ */
+async function verifyFirebaseConnection() {
+  const config = getActiveFirebaseConfig();
+  if (!config.projectId || !config.apiKey) {
+    isFirebaseConnected = false;
+    firebaseConnectionError = '未設定 Firebase Project ID / API Key';
+    return { connected: false, mode: 'local', reason: firebaseConnectionError };
+  }
+
+  if (!dbInstance) {
+    initFirebaseApp();
+  }
+  if (!dbInstance) {
+    return { connected: false, mode: 'local', reason: firebaseConnectionError || 'Firestore 初始化失敗' };
+  }
+
+  try {
+    await dbInstance.collection('config').doc('settings').get({ source: 'server' });
+    isFirebaseConnected = true;
+    firebaseConnectionError = '';
+    return { connected: true, mode: 'cloud', projectId: config.projectId };
+  } catch (err) {
+    // 若為 offline 錯誤但本地已有設定，允許走 Firestore 離線快取；若是權限拒絕則明確回報
+    if (err.code === 'permission-denied') {
+      isFirebaseConnected = false;
+      firebaseConnectionError = 'Firestore 安全性規則拒絕存取 (permission-denied)，請檢查 Rules';
+      return { connected: false, mode: 'error', reason: firebaseConnectionError };
+    }
+    if (err.code === 'unavailable') {
+      isFirebaseConnected = true;
+      firebaseConnectionError = '目前處於離線快取模式';
+      return { connected: true, mode: 'offline-cache', projectId: config.projectId, reason: firebaseConnectionError };
+    }
+    isFirebaseConnected = false;
+    firebaseConnectionError = err.message || String(err);
+    return { connected: false, mode: 'error', reason: firebaseConnectionError };
   }
 }

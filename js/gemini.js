@@ -1,6 +1,6 @@
 /**
- * 🤖 醫學物理師考照自學系統 - Gemini AI 服務層 (js/gemini.js)
- * 負責前端直連 Gemini REST API 進行出題、口試評分、SM-2 閃卡提煉與單元大綱整理
+ * 醫學物理師考照自學系統 - Gemini AI 服務層 (js/gemini.js)
+ * 負責前端直連 Gemini REST API 進行出題、口試評分與 SM-2 閃卡提煉
  */
 
 const GeminiService = {
@@ -10,7 +10,7 @@ const GeminiService = {
   async callGeminiAPI(prompt, systemInstruction) {
     const apiKey = await DB.getConfig('geminiApiKey');
     if (!apiKey || apiKey.trim() === '') {
-      throw new Error('未設定 Gemini API Key。請先前往「系統設定」頁面填寫 API 金鑰。');
+      throw new Error('未設定 Gemini API Key，請先前往「系統設定」頁面填寫 API 金鑰。');
     }
 
     const model = (await DB.getConfig('geminiModel')) || 'gemini-2.5-flash';
@@ -19,7 +19,7 @@ const GeminiService = {
     const payload = {
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: {
-        responseMimeType: "application/json",
+        responseMimeType: 'application/json',
         temperature: 0.7
       }
     };
@@ -31,7 +31,7 @@ const GeminiService = {
     }
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 45000); // 45 秒超時防護
+    const timeoutId = setTimeout(() => controller.abort(), 45000);
 
     let response;
     try {
@@ -70,13 +70,12 @@ const GeminiService = {
       try {
         return JSON.parse(textOut.trim());
       } catch (err) {
-        // LaTeX 單反斜線容錯修復 (Bugfix 4.4)
         const repaired = this.repairJsonBackslashes(textOut.trim());
         return JSON.parse(repaired);
       }
     } catch (e) {
       console.error('[GeminiService] JSON 解析失敗，原始回應:', responseText);
-      throw new Error("AI 回傳格式不符合預期 JSON: " + e.message);
+      throw new Error('AI 回傳格式不符合預期 JSON: ' + e.message);
     }
   },
 
@@ -86,21 +85,19 @@ const GeminiService = {
   async generateAIQuestions(moduleId, topicId, count = 5, difficulty = 2, unitId = null) {
     const syllabus = await DB.getSyllabus();
 
-    let topicName = '';
     let literatureList = '';
     let scopePrompt = '';
 
     if (unitId) {
-      const matchedUnit = syllabus.find(u => u.unitId === unitId);
+      const matchedUnit = syllabus.find((u) => u.unitId === unitId);
       if (!matchedUnit) throw new Error('找不到匹配的單元：' + unitId);
-      topicName = matchedUnit.topicName;
       literatureList = `${matchedUnit.literature} (${matchedUnit.chapters})`;
       scopePrompt = `【指定學習單元】[${unitId}] ${matchedUnit.unitName}\n【參考文獻範疇】${matchedUnit.literature}\n【指定章節細目】${matchedUnit.chapters}`;
     } else {
-      const matchedUnits = syllabus.filter(u => u.moduleId === moduleId && u.topicId === topicId);
+      const matchedUnits = syllabus.filter((u) => u.moduleId === moduleId && u.topicId === topicId);
       if (matchedUnits.length === 0) throw new Error('找不到匹配的主題');
-      topicName = matchedUnits[0].topicName;
-      literatureList = matchedUnits.map(u => `${u.literature} (${u.chapters})`).join(', ');
+      const topicName = matchedUnits[0].topicName;
+      literatureList = matchedUnits.map((u) => `${u.literature} (${u.chapters})`).join(', ');
       scopePrompt = `【主題名稱】${topicName}\n【參考文獻範疇】${literatureList}`;
     }
 
@@ -117,31 +114,41 @@ ${scopePrompt}
     "optionB": "選項 B...",
     "optionC": "選項 C...",
     "optionD": "選項 D...",
-    "correctAnswer": "A", // 必須是 A、B、C 或 D
+    "correctAnswer": "A",
     "explanation": "詳細的解析與計算推導步驟（繁體中文）...",
     "sourceRef": "具體參考文獻與章節節段（例如: TG-51 Sec. III）"
   }
 ]
 
 請確保：
-1. 題目必須符合中華民國醫學物理師證照考試（放射治療物理組）的專業水準。
+1. 題目符合中華民國醫學物理師證照考試（放射治療物理組）專業水準。
 2. 若有計算題，公式與給定參數需完整、精確。
-3. 選項需具備誘答性，不能一眼看出答案。
-4. 解析要詳盡完整，說明正確與錯誤選項的物理原理。
-5. 【重要：SVG 向量圖形支援與文字偏移】若此題目需要圖形說明（如照野幾何配置、射束入射路徑、深度劑量 PDD 曲線、Bragg Peak、或是電離腔測量配置等），請在 \`questionText\` 或 \`explanation\` 的合適內文位置直接嵌入 HTML 的 \`<svg>\` 程式碼：
-   - SVG 寬度請設為 "100%"，\`viewBox\` 請設為適當的大小（如 \`viewBox="0 0 400 200"\`），以利網頁響應式縮放。
-   - 由於系統為深色主題，SVG 內的線條（stroke）、文字（fill）與形狀必須使用明亮高對比的色彩（例如白色、亮灰、亮黃、亮青等，或使用 \`stroke="currentColor"\`），避免在深色背景下隱形。
-   - 【避免重疊】：請務必確保所有的 \`<text>\` 標籤不要與線條（\`<line>\`）、圓圈（\`<circle>\`）、長方形（\`<rect>\`）等圖案重疊。文字與圖形元素在坐標上應保持至少 15px ~ 20px 的偏移距離，以防文字與圖案交互重疊。
+3. 選項具備合理誘答性，解析詳盡完整。
+4. 【物理圖示規範 — 優先使用確定性繪圖引擎】：
+   若題目或詳解需要附圖，若屬於以下標準類型，請勿手寫 SVG 座標，直接插入 \`<div class="mp-diagram" data-spec='{"type":"...","params":{...}}'></div>\` 呼叫前端物理繪圖引擎：
+   - 深度劑量曲線: \`type: "pdd"\`, \`params: {"curves": ["photon_6mv" | "photon_18mv" | "electron_12mev" | "proton_pristine" | "proton_sobp"]}\`
+   - 離軸剖面: \`type: "profile"\`, \`params: {"showFFF": true, "fieldSize": 10}\`
+   - LQ 存活曲線: \`type: "lq_survival"\`, \`params: {}\`
+   - 核種衰變平衡: \`type: "decay"\`, \`params: {"t1": 66, "t2": 6}\`
+   - HVL 衰減曲線: \`type: "attenuation"\`, \`params: {"hvl1": 3.0, "showBroadBeam": true}\`
+   - TG-51 / TRS-398 校正配置: \`type: "tg51_setup"\`, \`params: {"setup": "SSD"|"SAD", "dref": 10, "field": "10×10 cm²", "protocol": "TG-51"|"TRS-398"}\`
+   - 幾何半影推導: \`type: "geometric_penumbra"\`, \`params: {"s": 2, "scd": 50, "ssd": 100, "d": 10}\`
+   - 照野發散銜接: \`type: "field_matching"\`, \`params: {"l1": 20, "l2": 20, "d": 10}\`
+   - TG-43 極座標: \`type: "tg43_geometry"\`, \`params: {"L": 3.0}\`
+   - 組織不均勻界面: \`type: "inhomogeneity_slab"\`, \`params: {}\`
+   - 直線加速器機頭: \`type: "linac_head"\`, \`params: {}\`
+   若確實需要自訂 \`<svg>\`（非上述類型），顏色務必使用 \`currentColor\`（主文字/主線條）、\`var(--accent)\`（重點強調）與 \`var(--text-muted)\`（輔助線），絕對不可寫死白色 (#ffffff) 以相容深/淺色雙主題。
 `;
 
-    const systemInstruction = "你是一位資深醫學物理師與考照出題專家。你出題極度嚴謹，完全符合醫學物理學會認證考試的規範，且只以繁體中文與 JSON 陣列格式回傳。";
+    const systemInstruction =
+      '你是一位資深醫學物理師與考照出題專家。你出題極度嚴謹，完全符合醫學物理學會認證考試的規範，且只以繁體中文與 JSON 陣列格式回傳。';
 
     const questions = await this.callGeminiAPI(prompt, systemInstruction);
 
-    const processedQuestions = questions.map(q => ({
+    const processedQuestions = questions.map((q) => ({
       questionId: crypto.randomUUID(),
-      moduleId: moduleId,
-      topicId: topicId,
+      moduleId,
+      topicId,
       unitId: unitId || '',
       difficulty: Number(difficulty),
       questionText: q.questionText,
@@ -166,21 +173,21 @@ ${scopePrompt}
    */
   async generateOralQuestionAI(moduleId, questionType) {
     const syllabus = await DB.getSyllabus();
-    const matchedUnits = syllabus.filter(u => u.moduleId === moduleId);
+    const matchedUnits = syllabus.filter((u) => u.moduleId === moduleId);
     if (matchedUnits.length === 0) throw new Error('找不到匹配的模組');
 
     const moduleName = matchedUnits[0].moduleName;
-    const literatureList = [...new Set(matchedUnits.map(u => u.literature))].join(', ');
+    const literatureList = [...new Set(matchedUnits.map((u) => u.literature))].join(', ');
 
     const typeMap = {
-      'concept': '概念解釋（評估基本觀念與理論深度）',
-      'clinical': '臨床情境題（評估面對異常、品管、異常劑量之緊急處置與判斷）',
-      'comparison': '比較分析（評估不同量測技術、協定之對比）',
-      'calculation': '計算與公式推導（評估劑量公式之口頭推導與邏輯說明）',
-      'regulation': '輻防安全與法規（評估防護設計與安全監管）'
+      concept: '概念解釋（評估基本觀念與理論深度）',
+      clinical: '臨床情境題（評估面對異常、品管、異常劑量之緊急處置與判斷）',
+      comparison: '比較分析（評估不同量測技術、協定之對比）',
+      calculation: '計算與公式推導（評估劑量公式之口頭推導與邏輯說明）',
+      regulation: '輻防安全與法規（評估防護設計與安全監管）'
     };
 
-    const typeDesc = typeMap[questionType] || typeMap['clinical'];
+    const typeDesc = typeMap[questionType] || typeMap.clinical;
 
     const prompt = `請針對醫學物理師證照的「口試」關卡，生成 1 道專業的口試題目。
 【醫學物理模組】${moduleId} - ${moduleName}
@@ -199,7 +206,8 @@ ${scopePrompt}
 3. 參考答案需列出考生回答時「必須包含的關鍵字(Keywords)」與推導邏輯。
 `;
 
-    const systemInstruction = "你是一位資深醫學物理師考照口試委員（放射治療組）。你提問專業犀利，重視邏輯、安全與文獻依據，只以繁體中文與 JSON 物件格式回傳。";
+    const systemInstruction =
+      '你是一位資深醫學物理師考照口試委員（放射治療組）。你提問專業犀利，重視邏輯、安全與文獻依據，只以繁體中文與 JSON 物件格式回傳。';
 
     const result = await this.callGeminiAPI(prompt, systemInstruction);
     return {
@@ -234,7 +242,7 @@ ${userAnswer}
   "accuracy": 20,
   "logic": 20,
   "depth": 25,
-  "feedback": "給予考生的詳細評語、改進建議與優缺點分析（繁體中文，要切中要點，口氣專業且建設性）...",
+  "feedback": "給予考生的詳細評語、改進建議與優缺點分析（繁體中文）...",
   "missingPoints": [
     "回答中缺漏的關鍵概念 1",
     "回答中缺漏的關鍵概念 2"
@@ -242,7 +250,8 @@ ${userAnswer}
 }
 `;
 
-    const systemInstruction = "你是一位嚴格但公正的醫學物理口試考官。你注重細節，會精準比對考生的回答與國際指引，給予極具建設性的臨床回饋。只以繁體中文與 JSON 物件格式回傳。";
+    const systemInstruction =
+      '你是一位嚴格但公正的醫學物理口試考官。你注重細節，會精準比對考生的回答與國際指引，給予建設性的臨床回饋。只以繁體中文與 JSON 物件格式回傳。';
 
     return await this.callGeminiAPI(prompt, systemInstruction);
   },
@@ -251,7 +260,7 @@ ${userAnswer}
    * 根據一段文獻內容自動生成 SM-2 知識卡片
    */
   async generateFlashcardsAI(moduleId, unitId, textContent) {
-    const prompt = `請閱讀以下醫學物理文獻片段，並為我生成 3-5 張雙面知識卡片（Flashcards），用於 Spaced Repetition（間隔重複）記憶：
+    const prompt = `請閱讀以下醫學物理文獻片段，並生成 3-5 張雙面知識卡片（Flashcards），用於 Spaced Repetition（間隔重複）記憶：
 
 【文獻內容】
 ${textContent}
@@ -260,23 +269,24 @@ ${textContent}
 [
   {
     "front": "卡片正面：簡短的問題或概念名詞（繁體中文）...",
-    "back": "卡片背面：答案、核心公式、或簡短精確的物理原理解釋（繁體中文）..."
+    "back": "卡片背面：答案、核心公式、或精確的物理原理解釋（繁體中文）..."
   }
 ]
 
 請確保：
 1. 卡片內容精簡扼要，方便快速閃卡複習。
 2. 著重在重要數值（如品管誤差容許值）、核心物理定義、或公式。
-3. 【重要】若內容包含 LaTeX 公式（如含有反斜線 \\ ），在 JSON 中必須將反斜線正確雙重轉義（例如將 \\lambda 寫成 \\\\lambda ），以符合標準 JSON 格式。
+3. 【重要】若內容包含 LaTeX 公式（如含有反斜線 \\ ），在 JSON 中必須將反斜線正確雙重轉義（例如將 \\lambda 寫成 \\\\lambda ）。
 `;
 
-    const systemInstruction = "你是醫學物理學習秘書，擅長將長篇文獻精煉為重點明確的 Anki 複習卡片。只以繁體中文與 JSON 陣列格式回傳。";
+    const systemInstruction =
+      '你是醫學物理學習秘書，擅長將長篇文獻精煉為重點明確的 Anki 複習卡片。只以繁體中文與 JSON 陣列格式回傳。';
 
     const cards = await this.callGeminiAPI(prompt, systemInstruction);
 
-    const processedCards = cards.map(c => ({
+    const processedCards = cards.map((c) => ({
       cardId: crypto.randomUUID(),
-      moduleId: moduleId,
+      moduleId,
       unitId: unitId || '',
       front: c.front,
       back: c.back,
@@ -289,40 +299,6 @@ ${textContent}
 
     await DB.insertReviewCards(processedCards);
     return processedCards;
-  },
-
-  /**
-   * 針對特定學習單元，整理詳細範圍與公式
-   */
-  async generateUnitSummaryAI(unitId) {
-    const syllabus = await DB.getSyllabus();
-    const unit = syllabus.find(u => u.unitId === unitId);
-    if (!unit) throw new Error('找不到單元資訊：' + unitId);
-
-    const prompt = `請針對以下醫學物理師考照的學習單元，整理出極為詳細且結構化的學習範圍內容與核心重點（繁體中文）：
-【單元代碼】${unit.unitId}
-【單元名稱】${unit.unitName}
-【所屬主題】[${unit.topicId}] ${unit.topicName}
-【參考文獻】${unit.literature}
-【章節細目】${unit.chapters}
-
-請針對此範圍整理並輸出以下四個部分：
-1. 【核心物理觀念與定義】：說明此單元最基礎的物理原理與物理量定義。
-2. 【核心計算公式與參數】：整理並列出所有必考的計算公式、公式中各代號的物理意義、常用常數。公式請使用標準 LaTeX 格式（例如：\\(D_{w,Q} = M \\cdot N_{D,w}^{Q_0} \\cdot k_Q\\)）。
-3. 【指引與規範 (如 AAPM TG 或 IAEA TRS)】：針對文獻中的具體品管項目、頻率、容許差值（Tolerances）、實驗配置進行整理。
-4. 【臨床情境與實務口試要點】：本單元在臨床實務上的重點與口試常問考點。
-
-你必須且只能回傳一個 JSON Object，格式如下：
-{
-  "unitId": "${unit.unitId}",
-  "unitName": "${unit.unitName}",
-  "summaryHtml": "HTML 格式的詳細整理內容。排版必須美觀，請使用 <h3>, <p>, <ul>, <li>, <strong>, <table>, <thead>, <tbody>, <tr>, <th>, <td> 等標籤。LaTeX 公式請以 \\(...\\) 包裹以利 MathJax 渲染。"
-}
-`;
-
-    const systemInstruction = "你是一位資深醫學物理師與考照輔導教授。你整理的複習筆記極度詳盡、精確，公式完美無缺，完全以繁體中文與 JSON 物件回傳。";
-
-    return await this.callGeminiAPI(prompt, systemInstruction);
   },
 
   /**
@@ -345,9 +321,8 @@ ${textContent}
       const validEscapes = ['"', '\\', '/', 'b', 'f', 'n', 'r', 't'];
       if (validEscapes.indexOf(nextChar) !== -1 || isUnicode) {
         return match;
-      } else {
-        return match + '\\';
       }
+      return match + '\\';
     });
   },
 
@@ -360,10 +335,7 @@ ${textContent}
     }
 
     const fallbackModels = this.getDefaultTopModels();
-
-    if (!apiKey || apiKey.trim() === '') {
-      return fallbackModels;
-    }
+    if (!apiKey || apiKey.trim() === '') return fallbackModels;
 
     try {
       const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey.trim()}`;
@@ -376,28 +348,27 @@ ${textContent}
       const data = await res.json();
       const rawList = data.models || [];
 
-      // 篩選：必須支援 generateContent，且排除 embedding/aqa/vision 等非相關模型
-      const candidateModels = rawList.filter(m => {
+      const candidateModels = rawList.filter((m) => {
         const id = (m.name || '').replace('models/', '');
         const methods = m.supportedGenerationMethods || [];
-        return methods.includes('generateContent') &&
+        return (
+          methods.includes('generateContent') &&
           !id.includes('embedding') &&
           !id.includes('aqa') &&
           !id.includes('imagen') &&
           !id.includes('tts') &&
           !id.includes('whisper') &&
           !id.includes('bison') &&
-          id.startsWith('gemini');
+          id.startsWith('gemini')
+        );
       });
 
       if (candidateModels.length === 0) return fallbackModels;
 
-      // 評分演算法：越新 (版本號高)、架構越適合考照推理運算 (flash/pro) 排名越前
-      const scored = candidateModels.map(m => {
+      const scored = candidateModels.map((m) => {
         const id = m.name.replace('models/', '');
         let score = 0;
 
-        // 版本號加權 (例如 2.5, 2.0, 1.5)
         const verMatch = id.match(/gemini-(\d+)\.?(\d+)?/i);
         if (verMatch) {
           const major = parseInt(verMatch[1] || '0', 10);
@@ -405,16 +376,12 @@ ${textContent}
           score += major * 1000 + minor * 100;
         }
 
-        // 模型定位加權
-        if (id.includes('flash')) score += 60; // flash 高速低延遲，最適合即時出題與自學
-        if (id.includes('pro')) score += 50;   // pro 深度推理，適合口試評分與推導
+        if (id.includes('flash')) score += 60;
+        if (id.includes('pro')) score += 50;
         if (id.includes('thinking')) score += 20;
-
-        // 實驗與別名版本微調
         if (id.includes('exp') || id.includes('preview')) score -= 15;
         if (id.includes('lite')) score -= 30;
 
-        // 定義友善中文標籤
         let desc = '';
         if (id.includes('2.5-flash')) desc = '推薦: 最新極速且精準，性價比首選';
         else if (id.includes('2.5-pro')) desc = '頂級旗艦: 複雜公式推導與口試首選';
@@ -424,17 +391,11 @@ ${textContent}
         else if (id.includes('1.5-flash')) desc = '高效輕量快速';
         else desc = m.displayName || id;
 
-        return {
-          id,
-          name: `${id} (${desc})`,
-          score
-        };
+        return { id, name: `${id} (${desc})`, score };
       });
 
-      // 依分數由高到低排序
       scored.sort((a, b) => b.score - a.score);
 
-      // 去除同一基礎模型的重複別名（例如保留最新別名，過濾 -001, -latest 等重複項目）
       const top5 = [];
       const seenBases = new Set();
 
@@ -454,9 +415,6 @@ ${textContent}
     }
   },
 
-  /**
-   * 預設精選前 5 款模型
-   */
   getDefaultTopModels() {
     return [
       { id: 'gemini-2.5-flash', name: 'gemini-2.5-flash (推薦: 最新極速且精準，性價比首選)' },

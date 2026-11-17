@@ -4,11 +4,21 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>醫學物理師考照自學系統</title>
-  
+
+  <!-- 在 CSS 渲染前先套用儲存的閱讀主題，防止閃爍 -->
+  <script>
+    (function () {
+      var t = localStorage.getItem('mp_theme');
+      if (t === 'light') {
+        document.documentElement.setAttribute('data-theme', 'light');
+      }
+    })();
+  </script>
+
   <!-- Material Icons -->
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
-  
-  <!-- MathJax Configuration for LaTeX formulas rendering -->
+
+  <!-- MathJax Configuration -->
   <script>
     window.MathJax = {
       tex: {
@@ -30,16 +40,20 @@
 
 <!-- 行動裝置頂部導覽列 -->
 <header class="mobile-header">
-  <button id="btn-sidebar-toggle" class="btn-sidebar-toggle">
-    <span class="material-icons-round">menu</span>
-  </button>
-  <div class="mobile-brand">
-    <div class="brand-icon-sm">MP</div>
-    <div class="mobile-brand-text">物理師自學系統</div>
+  <div style="display: flex; align-items: center; gap: 8px;">
+    <button id="btn-sidebar-toggle" class="btn-sidebar-toggle" aria-label="開啟選單">
+      <span class="material-icons-round">menu</span>
+    </button>
+    <div class="mobile-brand">
+      <div class="brand-icon" style="width: 26px; height: 26px; font-size: 11px;">MP</div>
+      <div class="mobile-brand-text">醫學物理師備考工作台</div>
+    </div>
   </div>
+  <button id="btn-theme-toggle-mobile" class="btn btn-secondary btn-sm" onclick="toggleTheme()" title="切換深色/淺色紙本閱讀模式">
+    <span class="material-icons-round" id="theme-icon-mobile">light_mode</span>
+  </button>
 </header>
 
-<!-- 側邊欄遮罩 -->
 <div class="sidebar-overlay" id="sidebar-overlay"></div>
 
 <div class="app-container">
@@ -49,10 +63,10 @@
       <div class="brand-icon">MP</div>
       <div class="brand-text">
         <h1>醫學物理師</h1>
-        <p>自學備考系統</p>
+        <p>考照備考工作台</p>
       </div>
     </div>
-    
+
     <ul class="nav-menu">
       <li class="nav-item active" data-page="dashboard">
         <a href="#dashboard">
@@ -68,7 +82,7 @@
       </li>
       <li class="nav-item" data-page="practice">
         <a href="#practice">
-          <span class="material-icons-round nav-icon">psychology</span>
+          <span class="material-icons-round nav-icon">quiz</span>
           <span>AI 練習題庫</span>
         </a>
       </li>
@@ -103,20 +117,22 @@
         </a>
       </li>
     </ul>
-    
+
     <div class="sidebar-footer">
-      <p>ROC Medical Physicist Study System</p>
-      <p>v2.5 (GitHub Pages + Firebase)</p>
+      <button id="btn-theme-toggle" class="btn btn-secondary" onclick="toggleTheme()" style="width: 100%; justify-content: flex-start;">
+        <span class="material-icons-round" id="theme-icon-desktop">light_mode</span>
+        <span id="theme-label-desktop">淺色紙本模式</span>
+      </button>
+      <div class="sidebar-meta">ROC Medical Physicist v3.0</div>
     </div>
   </aside>
-  
+
   <!-- 主要內容區域 -->
   <main class="main-content">
     <div id="app-view">
-      <!-- SPA 視圖渲染區 -->
       <div class="loader-container">
         <div class="spinner"></div>
-        <div class="loading-text">載入系統中...</div>
+        <div class="loading-text">載入系統中</div>
       </div>
     </div>
   </main>
@@ -124,22 +140,22 @@
 
 <!-- 浮動學習計時器 -->
 <div id="floating-timer" class="floating-timer">
-  <span class="material-icons-round" style="color: var(--secondary); animation: spin 4s infinite linear;">hourglass_empty</span>
+  <span class="material-icons-round" style="color: var(--accent);">timer</span>
   <div>
-    <div style="font-size: 0.7rem; color: var(--text-muted); font-weight: 600;">正在學習：<span id="timer-unit-name">未指定</span></div>
+    <div style="font-size: 11px; color: var(--text-muted);">正在學習：<span id="timer-unit-name">未指定</span></div>
     <div id="timer-time" class="timer-time">00:00:00</div>
   </div>
-  <button id="btn-timer-pause" class="btn btn-secondary" style="padding: 0.4rem 0.6rem; border-radius: 8px;">
-    <span class="material-icons-round" style="font-size: 1rem;">pause</span>
+  <button id="btn-timer-pause" class="btn btn-secondary btn-sm" title="暫停/繼續">
+    <span class="material-icons-round">pause</span>
   </button>
-  <button id="btn-timer-stop" class="btn btn-primary" style="padding: 0.4rem 0.6rem; border-radius: 8px;">
-    <span class="material-icons-round" style="font-size: 1rem;">done</span>
+  <button id="btn-timer-stop" class="btn btn-primary btn-sm" title="結束並記錄進度">
+    <span class="material-icons-round">done</span>
   </button>
 </div>
 
 <!-- Toast 全局通知 -->
 <div id="toast" class="toast">
-  <span id="toast-icon" class="material-icons-round">info</span>
+  <span id="toast-icon" class="material-icons-round" style="font-size: 18px;">info</span>
   <span id="toast-message">系統訊息</span>
 </div>
 
@@ -152,130 +168,96 @@
   <div class="page-header">
     <div class="page-title">
       <h2>備考學習儀表板</h2>
-      <p id="dashboard-subtitle">讀書百遍，其義自見。掌握備考數據，祝您一次通過物理師認證。</p>
+      <p>10 大考科、37 單元進度與每日記憶排程總覽</p>
     </div>
-    <div id="countdown-badge" class="btn btn-secondary" style="font-weight: 700; border-color: var(--primary);">
-      <span class="material-icons-round" style="color: var(--primary);">event</span>
-      <span>考試倒數 <span id="dash-countdown" style="color: var(--secondary); font-size: 1.15rem; font-family: monospace;">---</span> 天</span>
-    </div>
-  </div>
-  
-  <!-- 核心指標行 -->
-  <div class="grid-cols-4" style="margin-bottom: 2rem;">
-    <div class="glass-card" style="display: flex; align-items: center; gap: 1rem;">
-      <div style="background: rgba(0, 242, 254, 0.1); padding: 0.75rem; border-radius: 12px;">
-        <span class="material-icons-round" style="color: var(--secondary); font-size: 2rem;">speed</span>
-      </div>
-      <div>
-        <div style="font-size: 0.8rem; color: var(--text-muted); font-weight: 500;">學習完成度</div>
-        <div style="font-size: 1.5rem; font-weight: 700;"><span id="dash-progress-percent">0</span>%</div>
-        <div style="font-size: 0.7rem; color: var(--text-dark);"><span id="dash-completed-units">0</span> / <span id="dash-total-units">0</span> 單元</div>
-      </div>
-    </div>
-    
-    <div class="glass-card" style="display: flex; align-items: center; gap: 1rem;">
-      <div style="background: rgba(138, 43, 226, 0.1); padding: 0.75rem; border-radius: 12px;">
-        <span class="material-icons-round" style="color: var(--primary); font-size: 2rem;">schedule</span>
-      </div>
-      <div>
-        <div style="font-size: 0.8rem; color: var(--text-muted); font-weight: 500;">累計學習時數</div>
-        <div style="font-size: 1.5rem; font-weight: 700;"><span id="dash-hours">0.0</span> <span style="font-size: 0.9rem;">小時</span></div>
-        <div style="font-size: 0.7rem; color: var(--text-dark);">每日目標: <span id="dash-daily-goal">45</span> 分鐘</div>
-      </div>
-    </div>
-    
-    <div class="glass-card" style="display: flex; align-items: center; gap: 1rem;">
-      <div style="background: rgba(255, 179, 0, 0.1); padding: 0.75rem; border-radius: 12px;">
-        <span class="material-icons-round" style="color: var(--warning); font-size: 2rem;">local_fire_department</span>
-      </div>
-      <div>
-        <div style="font-size: 0.8rem; color: var(--text-muted); font-weight: 500;">連續學習天數</div>
-        <div style="font-size: 1.5rem; font-weight: 700;"><span id="dash-streak">0</span> <span style="font-size: 0.9rem;">天</span></div>
-        <div style="font-size: 0.7rem; color: var(--text-dark);" id="dash-streak-sub">保持下去！養成學習習慣</div>
-      </div>
-    </div>
-    
-    <div class="glass-card" style="display: flex; align-items: center; gap: 1rem;">
-      <div style="background: rgba(0, 230, 118, 0.1); padding: 0.75rem; border-radius: 12px;">
-        <span class="material-icons-round" style="color: var(--success); font-size: 2rem;">style</span>
-      </div>
-      <div>
-        <div style="font-size: 0.8rem; color: var(--text-muted); font-weight: 500;">待複習卡片</div>
-        <div style="font-size: 1.5rem; font-weight: 700;"><span id="dash-due-cards">0</span> <span style="font-size: 0.9rem;">張</span></div>
-        <div style="font-size: 0.7rem; color: var(--text-dark);">利用間隔重複科學記憶</div>
-      </div>
+    <div class="countdown-pill">
+      <span class="material-icons-round" style="font-size: 18px; color: var(--accent);">event</span>
+      <span>距離考照</span>
+      <strong id="dash-countdown" class="mono-num">---</strong>
+      <span>天</span>
     </div>
   </div>
-  
+
+  <!-- 核心純數字指標行 (Stat Cards) -->
+  <div class="grid-cols-4" style="margin-bottom: 24px;">
+    <div class="surface-card stat-card stat-card-accent">
+      <div class="stat-label">課綱完成度</div>
+      <div class="stat-value mono-num"><span id="dash-progress-percent">0</span><span class="stat-unit"> %</span></div>
+      <div class="stat-meta mono-num"><span id="dash-completed-units">0</span> / <span id="dash-total-units">0</span> 單元完成</div>
+    </div>
+
+    <div class="surface-card stat-card">
+      <div class="stat-label">累計研讀時數</div>
+      <div class="stat-value mono-num"><span id="dash-hours">0.0</span> <span class="stat-unit">hr</span></div>
+      <div class="stat-meta mono-num">今日 <span id="dash-today-mins">0</span> / 目標 <span id="dash-daily-goal">45</span> min</div>
+    </div>
+
+    <div class="surface-card stat-card">
+      <div class="stat-label">連續學習天數</div>
+      <div class="stat-value mono-num"><span id="dash-streak">0</span> <span class="stat-unit">天</span></div>
+      <div class="stat-meta mono-num" id="dash-streak-sub">近 7 日累計 0 min</div>
+    </div>
+
+    <div class="surface-card stat-card">
+      <div class="stat-label">今日待複習卡片</div>
+      <div class="stat-value mono-num"><span id="dash-due-cards">0</span> <span class="stat-unit">張</span></div>
+      <div class="stat-meta mono-num">總卡數 <span id="dash-total-cards">0</span> 張</div>
+    </div>
+  </div>
+
   <!-- 圖表區 -->
-  <div class="grid-cols-3" style="margin-bottom: 2rem;">
-    <div class="glass-card" style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 320px;">
-      <div class="card-title" style="align-self: flex-start; margin-bottom: 1rem; width: 100%;">
-        <span class="material-icons-round" style="color: var(--secondary);">donut_large</span>
-        <span>整體進度分析</span>
-      </div>
+  <div class="grid-cols-3" style="margin-bottom: 24px;">
+    <div class="surface-card" style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 300px;">
+      <div class="card-title" style="align-self: flex-start; margin-bottom: 12px; width: 100%;">整體進度分布</div>
       <div style="width: 100%; height: 200px; display: flex; align-items: center; justify-content: center;">
         <canvas id="canvas-progress-donut" style="width: 180px; height: 180px;"></canvas>
       </div>
     </div>
-    
-    <div class="glass-card" style="grid-column: span 2; height: 320px;">
-      <div class="card-header" style="border: none; padding: 0; margin-bottom: 0.5rem;">
-        <div class="card-title">
-          <span class="material-icons-round" style="color: var(--primary);">trending_up</span>
-          <span>近七日學習時數 (分鐘)</span>
-        </div>
+
+    <div class="surface-card span-2" style="height: 300px;">
+      <div class="card-header" style="border: none; padding: 0; margin-bottom: 8px;">
+        <div class="card-title">近 7 日每日學習分鐘數</div>
       </div>
-      <div style="width: 100%; height: 240px; position: relative;">
+      <div style="width: 100%; height: 230px; position: relative;">
         <canvas id="canvas-study-line" style="width: 100%; height: 100%;"></canvas>
       </div>
     </div>
   </div>
-  
+
   <div class="grid-cols-3">
-    <!-- 各模組進度 -->
-    <div class="glass-card" style="grid-column: span 2;">
+    <div class="surface-card span-2">
       <div class="card-header">
-        <h3 class="card-title">
-          <span class="material-icons-round">analytics</span>
-          <span>模組進度明細</span>
-        </h3>
+        <h3 class="card-title">10 大考科模組進度</h3>
       </div>
-      <div id="dash-module-list" style="display: flex; flex-direction: column; gap: 0.85rem;">
-        <div style="color: var(--text-muted); font-size: 0.9rem; text-align: center;">加載中...</div>
+      <div id="dash-module-list" style="display: flex; flex-direction: column; gap: 12px;">
+        <div style="color: var(--text-muted); font-size: 13px; text-align: center;">載入中</div>
       </div>
     </div>
-    
-    <!-- 快速行動 & 推薦單元 -->
-    <div class="glass-card" style="display: flex; flex-direction: column; justify-content: space-between;">
+
+    <div class="surface-card" style="display: flex; flex-direction: column; justify-content: space-between; gap: 16px;">
       <div>
         <div class="card-header">
-          <h3 class="card-title">
-            <span class="material-icons-round">lightbulb</span>
-            <span>今日推薦學習單元</span>
-          </h3>
+          <h3 class="card-title">下一順位研讀單元</h3>
         </div>
-        <div id="dash-recommendation-card" style="margin-bottom: 1.5rem;">
-          <div id="dash-rec-card-body" style="background: rgba(255,255,255,0.02); padding: 1rem; border-radius: 10px; border: 1px solid var(--border-color);">
-            <div style="font-weight: 600; font-size: 0.95rem; color: var(--secondary);" id="dash-rec-title">正在規劃中...</div>
-            <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">對應文獻: <span id="dash-rec-lit">--</span></div>
-            <p style="font-size: 0.8rem; color: var(--text-dark); margin-top: 0.5rem;" id="dash-rec-desc">載入您的學習進度以推薦下一個最適合研讀的單元。</p>
-          </div>
+        <div id="dash-rec-card-body" class="sub-card">
+          <div style="font-weight: 600; font-size: 14px; color: var(--accent);" id="dash-rec-title">規劃中</div>
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">文獻：<span id="dash-rec-lit">--</span></div>
+          <p style="font-size: 12.5px; color: var(--text-dark); margin-top: 8px;" id="dash-rec-desc">載入進度中</p>
         </div>
       </div>
-      
-      <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+
+      <div style="display: flex; flex-direction: column; gap: 8px;">
         <button class="btn btn-primary" onclick="window.location.hash='#practice'" style="width: 100%;">
-          <span class="material-icons-round">psychology</span>
-          <span>進行 AI 題庫練習</span>
+          <span class="material-icons-round">quiz</span>
+          <span>進入題庫作答</span>
         </button>
         <button class="btn btn-secondary" onclick="window.location.hash='#review'" style="width: 100%;">
           <span class="material-icons-round">layers</span>
-          <span>複習卡片 (<span id="btn-due-count">0</span>)</span>
+          <span>複習到期卡片 (<span id="btn-due-count" class="mono-num">0</span>)</span>
         </button>
         <button class="btn btn-secondary" onclick="window.location.hash='#oral'" style="width: 100%;">
           <span class="material-icons-round">record_voice_over</span>
-          <span>模擬口試問答</span>
+          <span>口試模擬問答</span>
         </button>
       </div>
     </div>
@@ -287,30 +269,30 @@
   <div class="page-header">
     <div class="page-title">
       <h2>學習課綱與進度規劃</h2>
-      <p>涵蓋 10 大學術領域、37 個學習單元與指定考照文獻。在此啟動學習計時器或維護筆記。</p>
+      <p>10 大考科、37 個學習單元，整合標準物理圖解、NotebookLM 提示詞、隨堂測驗與計時器</p>
     </div>
   </div>
-  
-  <div class="glass-card" style="margin-bottom: 2rem;">
-    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;" id="syllabus-module-tabs">
-      <button class="btn btn-primary tab-btn active" data-mod="ALL">全部模組</button>
-      <button class="btn btn-secondary tab-btn" data-mod="M1">M1 基礎物理</button>
-      <button class="btn btn-secondary tab-btn" data-mod="M2">M2 劑量學</button>
-      <button class="btn btn-secondary tab-btn" data-mod="M3">M3 治療計劃</button>
-      <button class="btn btn-secondary tab-btn" data-mod="M4">M4 特殊技術</button>
-      <button class="btn btn-secondary tab-btn" data-mod="M5">M5 品質保證</button>
-      <button class="btn btn-secondary tab-btn" data-mod="M6">M6 影像QC</button>
-      <button class="btn btn-secondary tab-btn" data-mod="M7">M7 輻防安全</button>
-      <button class="btn btn-secondary tab-btn" data-mod="M8">M8 基礎醫學</button>
-      <button class="btn btn-secondary tab-btn" data-mod="M9">M9 放射生物</button>
-      <button class="btn btn-secondary tab-btn" data-mod="M10">M10 電腦概論</button>
+
+  <div class="surface-card" style="margin-bottom: 16px; padding: 14px 16px;">
+    <div style="display: flex; gap: 8px; flex-wrap: wrap;" id="syllabus-module-tabs">
+      <button class="btn btn-primary btn-sm tab-btn active" data-mod="ALL">全部模組</button>
+      <button class="btn btn-secondary btn-sm tab-btn" data-mod="M1">M1 基礎物理</button>
+      <button class="btn btn-secondary btn-sm tab-btn" data-mod="M2">M2 劑量學</button>
+      <button class="btn btn-secondary btn-sm tab-btn" data-mod="M3">M3 治療計劃</button>
+      <button class="btn btn-secondary btn-sm tab-btn" data-mod="M4">M4 特殊技術</button>
+      <button class="btn btn-secondary btn-sm tab-btn" data-mod="M5">M5 品質保證</button>
+      <button class="btn btn-secondary btn-sm tab-btn" data-mod="M6">M6 影像QC</button>
+      <button class="btn btn-secondary btn-sm tab-btn" data-mod="M7">M7 輻防安全</button>
+      <button class="btn btn-secondary btn-sm tab-btn" data-mod="M8">M8 基礎醫學</button>
+      <button class="btn btn-secondary btn-sm tab-btn" data-mod="M9">M9 放射生物</button>
+      <button class="btn btn-secondary btn-sm tab-btn" data-mod="M10">M10 電腦概論</button>
     </div>
   </div>
-  
-  <div id="syllabus-list" style="display: flex; flex-direction: column; gap: 1.5rem;">
+
+  <div id="syllabus-list" style="display: flex; flex-direction: column; gap: 12px;">
     <div class="loader-container">
       <div class="spinner"></div>
-      <div class="loading-text">載入課綱進度中...</div>
+      <div class="loading-text">載入課綱進度中</div>
     </div>
   </div>
 </template>
@@ -320,87 +302,84 @@
   <div class="page-header">
     <div class="page-title">
       <h2>AI 練習題庫</h2>
-      <p>由 Gemini AI 讀取您的文獻課綱，量身生成精準的單選練習題，支援自我審查與手動擴充。</p>
+      <p>支援「互動盲測作答」與「詳解審查模式」，錯題與重點可一鍵轉入 SM-2 記憶卡</p>
     </div>
   </div>
-  
-  <div class="grid-cols-3" style="margin-bottom: 2rem;">
-    <!-- 左邊：出題面版 -->
-    <div class="glass-card" style="grid-column: span 1; display: flex; flex-direction: column; gap: 1.5rem;">
+
+  <div class="grid-cols-3">
+    <div class="surface-card" style="display: flex; flex-direction: column; gap: 16px; height: fit-content;">
       <div>
         <div class="card-header">
-          <h3 class="card-title">
-            <span class="material-icons-round" style="color: var(--secondary);">bolt</span>
-            <span>AI 自動生成題目</span>
-          </h3>
+          <h3 class="card-title">題目生成設定</h3>
         </div>
-        
+
         <div class="form-group">
           <label class="form-label" for="practice-mod-select">選擇模組</label>
           <select id="practice-mod-select"></select>
         </div>
-        
+
         <div class="form-group">
           <label class="form-label" for="practice-topic-select">選擇主題</label>
           <select id="practice-topic-select"></select>
         </div>
-        
+
         <div class="form-group">
           <label class="form-label" for="practice-unit-select">選擇小單元</label>
           <select id="practice-unit-select"></select>
         </div>
-        
+
         <div class="form-group">
           <label class="form-label" for="practice-diff-select">難度等級</label>
           <select id="practice-diff-select">
-            <option value="1">難度 1 — 核心觀念題 (基礎)</option>
-            <option value="2" selected>難度 2 — 應用計算題 (中等)</option>
-            <option value="3">難度 3 — 複雜推導與臨床決策 (高難)</option>
+            <option value="1">難度 1 — 核心觀念題</option>
+            <option value="2" selected>難度 2 — 應用計算題</option>
+            <option value="3">難度 3 — 推導與臨床決策</option>
           </select>
         </div>
-        
+
         <div class="form-group">
           <label class="form-label" for="practice-count-select">生成數量</label>
           <select id="practice-count-select">
-            <option value="3">生成 3 題</option>
-            <option value="5" selected>生成 5 題</option>
-            <option value="10">生成 10 題</option>
+            <option value="3">3 題</option>
+            <option value="5" selected>5 題</option>
+            <option value="10">10 題</option>
           </select>
         </div>
-        
-        <button id="btn-generate-qs" class="btn btn-accent" style="width: 100%;">
-          <span class="material-icons-round">bolt</span>
+
+        <button id="btn-generate-qs" class="btn btn-primary" style="width: 100%;">
+          <span class="material-icons-round">auto_awesome</span>
           <span>使用 Gemini 出題</span>
         </button>
       </div>
-      
-      <!-- 手動出題 -->
-      <div style="border-top: 1px solid var(--border-color); padding-top: 1.5rem;">
+
+      <div style="border-top: 1px solid var(--border-color); padding-top: 16px;">
         <button class="btn btn-secondary" onclick="openAddQuestionModal()" style="width: 100%;">
           <span class="material-icons-round">add</span>
           <span>手動新增題目</span>
         </button>
       </div>
     </div>
-    
-    <!-- 右邊：題庫題目清單 -->
-    <div class="glass-card" style="grid-column: span 2;">
-      <div class="card-header">
+
+    <div class="surface-card span-2">
+      <div class="card-header" style="flex-wrap: wrap;">
         <h3 class="card-title">
-          <span class="material-icons-round">view_list</span>
-          <span>已生成題庫 (<span id="practice-qs-count">0</span> 題)</span>
+          題庫清單 (<span id="practice-qs-count" class="mono-num">0</span> 題)
         </h3>
-        <div>
-          <select id="filter-verified-select" style="padding: 0.4rem 0.8rem; font-size: 0.8rem; width: auto;">
-            <option value="all">顯示全部</option>
-            <option value="unverified" selected>僅顯示 AI 待審查</option>
+        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+          <button id="btn-toggle-practice-mode" class="btn btn-secondary btn-sm" title="切換作答遮蔽或直接展開解析">
+            <span class="material-icons-round">visibility_off</span>
+            <span id="practice-mode-label">互動盲測模式</span>
+          </button>
+          <select id="filter-verified-select" style="padding: 4px 10px; font-size: 12px; width: auto; height: 30px;">
+            <option value="all" selected>顯示全部</option>
+            <option value="unverified">僅顯示 AI 待審查</option>
             <option value="verified">僅顯示已核可</option>
           </select>
         </div>
       </div>
-      
-      <div id="questions-list-container" style="display: flex; flex-direction: column; gap: 1.5rem; max-height: 550px; overflow-y: auto; padding-right: 0.5rem;">
-        <div style="text-align: center; color: var(--text-muted); padding: 3rem;">請在左側選取主題進行題目載入。</div>
+
+      <div id="questions-list-container" style="display: flex; flex-direction: column; gap: 16px; max-height: 640px; overflow-y: auto; padding-right: 4px;">
+        <div style="text-align: center; color: var(--text-muted); padding: 32px;">請在左側選取主題載入題目</div>
       </div>
     </div>
   </div>
@@ -411,96 +390,92 @@
   <div class="page-header">
     <div class="page-title">
       <h2>模擬測驗中心</h2>
-      <p>模擬正式物理師認證筆試，全範圍模擬考為 80 題單選（60分鐘）。支援即時交卷、自動診斷與弱點雷達圖分析。</p>
+      <p>全範圍模擬考 (M1~M10, 80題/60分鐘) 與單模組驗收，支援 10 軸弱點雷達與錯題一鍵轉記憶卡</p>
     </div>
   </div>
-  
+
   <!-- 1. 測驗設定與歷史紀錄 -->
   <div id="exam-setup-view" class="grid-cols-3">
-    <div class="glass-card" style="grid-column: span 1;">
+    <div class="surface-card" style="height: fit-content;">
       <div class="card-header">
-        <h3 class="card-title">
-          <span class="material-icons-round">post_add</span>
-          <span>開啟新測驗</span>
-        </h3>
+        <h3 class="card-title">開啟新測驗</h3>
       </div>
-      
+
       <div class="form-group">
         <label class="form-label" for="exam-type-select">測驗類型</label>
         <select id="exam-type-select">
-          <option value="full" selected>全範圍模擬考 (80題/60分鐘)</option>
-          <option value="module">單一模組驗收測驗 (20題/30分鐘)</option>
+          <option value="full" selected>全範圍模擬考 (80 題 / 60 分鐘)</option>
+          <option value="module">單一模組驗收 (20 題 / 30 分鐘)</option>
         </select>
       </div>
-      
+
       <div class="form-group" id="exam-mod-group" style="display: none;">
-        <label class="form-label" for="exam-mod-select">選擇要測驗的模組</label>
+        <label class="form-label" for="exam-mod-select">選擇測驗模組</label>
         <select id="exam-mod-select"></select>
       </div>
-      
-      <button id="btn-start-exam" class="btn btn-primary" style="width: 100%; margin-top: 1rem;">
-        <span class="material-icons-round">play_lesson</span>
+
+      <button id="btn-start-exam" class="btn btn-primary" style="width: 100%; margin-top: 8px;">
+        <span class="material-icons-round">play_arrow</span>
         <span>開始測驗</span>
       </button>
     </div>
-    
-    <div class="glass-card" style="grid-column: span 2;">
+
+    <div class="surface-card span-2">
       <div class="card-header">
-        <h3 class="card-title">
-          <span class="material-icons-round">history</span>
-          <span>歷次模擬考成績</span>
-        </h3>
+        <h3 class="card-title">歷次模擬考成績（點擊列可回看詳解）</h3>
       </div>
-      <div class="table-responsive" style="max-height: 250px; overflow-y: auto;">
-        <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.9rem;" id="table-exam-history">
+      <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+        <table class="data-table" id="table-exam-history">
           <thead>
-            <tr style="border-bottom: 2px solid var(--border-color); color: var(--text-muted);">
-              <th style="padding: 0.5rem 0.25rem;">日期</th>
-              <th style="padding: 0.5rem 0.25rem;">類型</th>
-              <th style="padding: 0.5rem 0.25rem;">答對數</th>
-              <th style="padding: 0.5rem 0.25rem;">分數</th>
-              <th style="padding: 0.5rem 0.25rem;">耗時</th>
+            <tr>
+              <th>日期</th>
+              <th>類型</th>
+              <th>答對題數</th>
+              <th>分數</th>
+              <th>耗時</th>
             </tr>
           </thead>
           <tbody id="exam-history-tbody">
-            <tr><td colspan="5" style="text-align: center; padding: 2rem; color: var(--text-dark);">無測驗記錄</td></tr>
+            <tr><td colspan="5" style="text-align: center; padding: 24px; color: var(--text-dark);">無測驗記錄</td></tr>
           </tbody>
         </table>
       </div>
     </div>
   </div>
-  
+
   <!-- 2. 測驗進行中視圖 -->
-  <div id="exam-active-view" class="grid-cols-4" style="display: none; margin-top: 1rem;">
-    <div class="glass-card" style="grid-column: span 1; height: fit-content; display: flex; flex-direction: column; gap: 1.25rem;">
+  <div id="exam-active-view" class="grid-cols-4" style="display: none;">
+    <div class="surface-card" style="height: fit-content; display: flex; flex-direction: column; gap: 16px;">
       <div style="text-align: center;">
-        <div style="font-size: 0.8rem; color: var(--text-muted); font-weight: 500;">剩餘時間</div>
-        <div id="active-exam-timer" style="font-size: 2rem; font-weight: 700; font-family: monospace; color: var(--secondary);">00:00</div>
+        <div style="font-size: 12px; color: var(--text-muted);">剩餘時間</div>
+        <div id="active-exam-timer" class="mono-num" style="font-size: 28px; font-weight: 600; color: var(--accent);">00:00</div>
       </div>
-      
-      <div style="border-top: 1px solid var(--border-color); padding-top: 1rem;">
-        <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem; font-weight: 500;">答題狀態 (<span id="exam-nav-completed">0</span>/<span id="exam-nav-total">0</span>)</div>
-        <div id="exam-nav-grid" style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.5rem; max-height: 250px; overflow-y: auto;"></div>
+
+      <div style="border-top: 1px solid var(--border-color); padding-top: 12px;">
+        <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px;">
+          答題進度 (<span id="exam-nav-completed" class="mono-num">0</span>/<span id="exam-nav-total" class="mono-num">0</span>)
+        </div>
+        <div id="exam-nav-grid" style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; max-height: 260px; overflow-y: auto;"></div>
       </div>
-      
+
       <button id="btn-submit-exam" class="btn btn-danger" style="width: 100%;">
         <span class="material-icons-round">check_circle</span>
-        <span>提前交卷</span>
+        <span>交卷評分</span>
       </button>
     </div>
-    
-    <div class="glass-card" style="grid-column: span 3; display: flex; flex-direction: column; justify-content: space-between; min-height: 450px;">
+
+    <div class="surface-card span-3" style="display: flex; flex-direction: column; justify-content: space-between; min-height: 440px;">
       <div>
-        <div style="display: flex; justify-content: space-between; border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem; margin-bottom: 1.5rem;">
-          <span style="font-weight: 700; color: var(--primary);">第 <span id="active-q-index">1</span> 題</span>
-          <span class="badge badge-todo" style="font-size: 0.7rem;">難度 <span id="active-q-diff">1</span></span>
+        <div style="display: flex; justify-content: space-between; border-bottom: 1px solid var(--border-color); padding-bottom: 12px; margin-bottom: 16px;">
+          <span class="mono-num" style="font-weight: 600; color: var(--accent);">第 <span id="active-q-index">1</span> 題</span>
+          <span class="badge badge-todo mono-num">難度 <span id="active-q-diff">1</span></span>
         </div>
-        
-        <div id="active-q-text" class="markdown-view" style="font-size: 1.1rem; font-weight: 500; margin-bottom: 2rem;">載入題目中...</div>
+
+        <div id="active-q-text" class="markdown-view" style="font-size: 15px; margin-bottom: 20px;">載入題目中</div>
         <div id="active-q-options" class="quiz-options"></div>
       </div>
-      
-      <div style="display: flex; justify-content: space-between; border-top: 1px solid var(--border-color); padding-top: 1.25rem; margin-top: 1.5rem;">
+
+      <div style="display: flex; justify-content: space-between; border-top: 1px solid var(--border-color); padding-top: 16px; margin-top: 16px;">
         <button id="btn-exam-prev" class="btn btn-secondary">
           <span class="material-icons-round">arrow_back</span>
           <span>上一題</span>
@@ -513,41 +488,34 @@
     </div>
   </div>
 
-  <!-- 3. 測驗成績與弱點雷達圖視圖 -->
-  <div id="exam-result-view" style="display: none; margin-top: 1.5rem;">
-    <div class="grid-cols-3" style="margin-bottom: 1.5rem;">
-      <div class="glass-card" style="grid-column: span 1; text-align: center; display: flex; flex-direction: column; justify-content: center; align-items: center;">
-        <div style="font-size: 0.9rem; color: var(--text-muted); font-weight: 600;">測驗總分</div>
-        <div style="font-size: 3.5rem; font-weight: 800; color: var(--secondary); margin: 0.5rem 0;" id="res-score">0</div>
-        <div style="font-size: 0.85rem; color: var(--text-dark);">
-          答對 <span id="res-correct" style="color: var(--success); font-weight: 700;">0</span> / <span id="res-total">0</span> 題 | 耗時 <span id="res-time">0</span>
+  <!-- 3. 測驗成績與 10 軸雷達圖視圖 -->
+  <div id="exam-result-view" style="display: none;">
+    <div class="grid-cols-3" style="margin-bottom: 16px;">
+      <div class="surface-card" style="text-align: center; display: flex; flex-direction: column; justify-content: center; align-items: center;">
+        <div style="font-size: 13px; color: var(--text-muted);">測驗總分</div>
+        <div class="mono-num" style="font-size: 48px; font-weight: 600; color: var(--accent); margin: 8px 0;" id="res-score">0</div>
+        <div class="mono-num" style="font-size: 13px; color: var(--text-muted);">
+          答對 <span id="res-correct" style="color: var(--success); font-weight: 600;">0</span> / <span id="res-total">0</span> 題 · 耗時 <span id="res-time">0</span>
         </div>
       </div>
 
-      <div class="glass-card" style="grid-column: span 2; display: flex; flex-direction: column; align-items: center;">
-        <div class="card-title" style="align-self: flex-start; margin-bottom: 0.5rem;">
-          <span class="material-icons-round" style="color: var(--primary);">radar</span>
-          <span>各科模組弱點雷達分析</span>
-        </div>
+      <div class="surface-card span-2" style="display: flex; flex-direction: column; align-items: center;">
+        <div class="card-title" style="align-self: flex-start; margin-bottom: 8px;">M1~M10 考科模組弱點雷達圖</div>
         <div style="width: 100%; height: 260px; display: flex; align-items: center; justify-content: center;">
-          <canvas id="canvas-exam-radar" style="width: 280px; height: 260px;"></canvas>
+          <canvas id="canvas-exam-radar" style="width: 300px; height: 260px;"></canvas>
         </div>
       </div>
     </div>
 
-    <!-- 錯題檢討清單 -->
-    <div class="glass-card">
+    <div class="surface-card">
       <div class="card-header">
-        <h3 class="card-title">
-          <span class="material-icons-round">fact_check</span>
-          <span>題目詳解與檢討</span>
-        </h3>
-        <button class="btn btn-secondary" onclick="loadExamPage()" style="padding: 0.4rem 0.8rem; font-size: 0.85rem;">
-          <span class="material-icons-round">replay</span>
+        <h3 class="card-title">題目詳解與錯題檢討</h3>
+        <button class="btn btn-secondary btn-sm" onclick="loadExamPage()">
+          <span class="material-icons-round">arrow_back</span>
           <span>返回測驗中心</span>
         </button>
       </div>
-      <div id="exam-error-list" style="display: flex; flex-direction: column; gap: 1rem; max-height: 500px; overflow-y: auto;"></div>
+      <div id="exam-error-list" style="display: flex; flex-direction: column; gap: 12px; max-height: 540px; overflow-y: auto;"></div>
     </div>
   </div>
 </template>
@@ -557,103 +525,101 @@
   <div class="page-header">
     <div class="page-title">
       <h2>知識卡片複習</h2>
-      <p>採用 SuperMemo-2 (SM-2) 科學演算法，根據您的回憶記憶品質 (0-5分) 自動調節下一次複習間隔。</p>
+      <p>SuperMemo-2 (SM-2) 間隔重複演算法，依據回憶品質 (0–5 分) 自動排程下次複習日</p>
     </div>
   </div>
-  
+
   <div class="grid-cols-3">
-    <!-- 左邊：複習進行區 -->
-    <div class="glass-card" style="grid-column: span 2; display: flex; flex-direction: column; align-items: center; min-height: 480px;">
-      <!-- 篩選控制區 -->
-      <div style="width: 100%; display: flex; gap: 1rem; margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border-color); flex-wrap: wrap;">
+    <div class="surface-card span-2" style="display: flex; flex-direction: column; align-items: center; min-height: 480px;">
+      <div style="width: 100%; display: flex; gap: 12px; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border-color); flex-wrap: wrap;">
         <div style="flex: 1; min-width: 150px;">
-          <label style="font-size: 0.8rem; color: var(--text-muted); font-weight: 600; margin-bottom: 0.25rem; display: block;">篩選模組</label>
-          <select id="review-filter-mod" class="form-control" style="padding: 0.4rem 0.75rem; font-size: 0.85rem;"></select>
+          <label class="form-label" for="review-filter-mod">篩選模組</label>
+          <select id="review-filter-mod" class="form-control"></select>
         </div>
         <div style="flex: 1.5; min-width: 200px;">
-          <label style="font-size: 0.8rem; color: var(--text-muted); font-weight: 600; margin-bottom: 0.25rem; display: block;">篩選單元</label>
-          <select id="review-filter-unit" class="form-control" style="padding: 0.4rem 0.75rem; font-size: 0.85rem;"></select>
+          <label class="form-label" for="review-filter-unit">篩選單元</label>
+          <select id="review-filter-unit" class="form-control"></select>
         </div>
       </div>
 
-      <div id="review-active-box" style="width: 100%; display: none; flex-direction: column; align-items: center; flex-grow: 1; justify-content: center; padding: 1.5rem 0;">
-        <div style="font-size: 0.85rem; color: var(--text-muted); font-weight: 500; margin-bottom: 1.5rem;">
-          今日待複習進度：<span id="review-card-current">0</span> / <span id="review-card-total">0</span>
+      <div id="review-active-box" style="width: 100%; display: none; flex-direction: column; align-items: center; flex-grow: 1; justify-content: center; padding: 8px 0;">
+        <div style="width: 100%; display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+          <div style="font-size: 13px; color: var(--text-muted);">
+            待複習進度：<span id="review-card-current" class="mono-num">0</span> / <span id="review-card-total" class="mono-num">0</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span class="kbd">Space</span><span style="font-size: 12px; color: var(--text-dark);">翻面</span>
+            <span class="kbd">0–5</span><span style="font-size: 12px; color: var(--text-dark);">評分</span>
+            <button id="btn-delete-review-card" class="btn btn-danger btn-sm" title="刪除此知識卡">
+              <span class="material-icons-round">delete</span>
+            </button>
+          </div>
         </div>
-        
-        <!-- 3D 翻轉卡片 -->
+
         <div class="card-flipper" id="review-card-flipper">
           <div class="card-inner">
             <div class="card-front">
-              <span class="badge badge-todo" style="position: absolute; top: 1.5rem; left: 1.5rem;" id="review-card-mod-front">M1</span>
-              <div class="card-text markdown-view" id="review-card-front-text">問題載入中...</div>
-              <div style="position: absolute; bottom: 1.5rem; font-size: 0.75rem; color: var(--text-dark);">點擊卡片翻面看解答</div>
+              <span class="badge badge-todo mono-num" style="position: absolute; top: 16px; left: 16px;" id="review-card-mod-front">M1</span>
+              <div class="card-text markdown-view" id="review-card-front-text">問題載入中</div>
+              <div style="position: absolute; bottom: 14px; font-size: 12px; color: var(--text-dark);">點擊卡片或按 Space 翻面</div>
             </div>
             <div class="card-back">
-              <span class="badge badge-completed" style="position: absolute; top: 1.5rem; left: 1.5rem;" id="review-card-mod-back">M1</span>
-              <div class="card-text markdown-view" id="review-card-back-text">答案載入中...</div>
-              <div style="position: absolute; bottom: 1.5rem; font-size: 0.75rem; color: rgba(255,255,255,0.3);">再度點擊卡片可翻回正面</div>
+              <span class="badge badge-completed mono-num" style="position: absolute; top: 16px; left: 16px;" id="review-card-mod-back">M1</span>
+              <div class="card-text markdown-view" id="review-card-back-text">答案載入中</div>
+              <div style="position: absolute; bottom: 14px; font-size: 12px; color: var(--text-dark);">點擊翻回正面</div>
             </div>
           </div>
         </div>
-        
-        <!-- 評分按鈕群 -->
-        <div id="review-rating-actions" style="display: none; flex-direction: column; align-items: center; gap: 1rem; width: 100%; animation: slideInUp 0.25s ease;">
-          <div style="font-size: 0.85rem; color: var(--text-muted); font-weight: 600;">請為您的「回憶品質」進行自我評分：</div>
-          <div style="display: flex; gap: 0.5rem; justify-content: center; width: 100%; flex-wrap: wrap;">
-            <button class="btn btn-danger rating-btn" data-score="0">0 分 (忘光)</button>
-            <button class="btn btn-secondary rating-btn" style="color: var(--danger); border-color: rgba(255,23,68,0.2);" data-score="1">1 分 (很模糊)</button>
-            <button class="btn btn-secondary rating-btn" style="color: var(--warning); border-color: rgba(255,179,0,0.2);" data-score="2">2 分 (拼湊想起)</button>
-            <button class="btn btn-secondary rating-btn" style="color: var(--info); border-color: rgba(0,176,255,0.2);" data-score="3">3 分 (吃力答對)</button>
-            <button class="btn btn-secondary rating-btn" style="color: var(--success); border-color: rgba(0,230,118,0.2);" data-score="4">4 分 (稍微遲疑)</button>
-            <button class="btn btn-primary rating-btn" data-score="5">5 分 (反射答對)</button>
+
+        <div id="review-rating-actions" style="display: none; flex-direction: column; align-items: center; gap: 10px; width: 100%;">
+          <div style="font-size: 13px; color: var(--text-muted);">回憶品質評分（按鍵盤 0–5 直接提交）</div>
+          <div style="display: flex; gap: 8px; justify-content: center; width: 100%; flex-wrap: wrap;">
+            <button class="btn btn-danger btn-sm rating-btn" data-score="0">0 忘光</button>
+            <button class="btn btn-secondary btn-sm rating-btn" style="color: var(--danger);" data-score="1">1 模糊</button>
+            <button class="btn btn-secondary btn-sm rating-btn" style="color: var(--warning);" data-score="2">2 拼湊</button>
+            <button class="btn btn-secondary btn-sm rating-btn" style="color: var(--info);" data-score="3">3 吃力</button>
+            <button class="btn btn-secondary btn-sm rating-btn" style="color: var(--success);" data-score="4">4 遲疑</button>
+            <button class="btn btn-primary btn-sm rating-btn" data-score="5">5 秒答</button>
           </div>
         </div>
       </div>
-      
-      <!-- 複習完畢與空狀態 -->
-      <div id="review-empty-box" style="text-align: center; padding: 3rem; display: none; flex-grow: 1; flex-direction: column; align-items: center; justify-content: center;">
-        <span class="material-icons-round" style="font-size: 5rem; color: var(--success); animation: pulse 2s infinite;">task_alt</span>
-        <h3 style="margin-top: 1rem;">今日複習任務已完成！</h3>
-        <p style="color: var(--text-muted); font-size: 0.9rem; margin-top: 0.5rem;">沒有符合該篩選範圍的到期知識卡片。您可以在「課綱與進度」中點擊單元右側的 AI 閃電按鈕生成更多卡片。</p>
+
+      <div id="review-empty-box" style="text-align: center; padding: 48px 16px; display: none; flex-grow: 1; flex-direction: column; align-items: center; justify-content: center;">
+        <span class="material-icons-round" style="font-size: 48px; color: var(--success);">task_alt</span>
+        <h3 style="margin-top: 12px; font-size: 16px;">目前篩選範圍無到期卡片</h3>
+        <p style="color: var(--text-muted); font-size: 13px; margin-top: 6px; max-width: 420px;">可在右側新增卡片，或在「題庫練習 / 課綱單元」將錯題與文獻重點一鍵轉為記憶卡。</p>
       </div>
     </div>
-    
-    <!-- 右邊：自建卡片 -->
-    <div class="glass-card" style="grid-column: span 1; display: flex; flex-direction: column; gap: 1.5rem;">
-      <div>
-        <div class="card-header">
-          <h3 class="card-title">
-            <span class="material-icons-round">add_box</span>
-            <span>新增自建卡片</span>
-          </h3>
-        </div>
-        
-        <div class="form-group">
-          <label class="form-label" for="card-add-mod">選擇模組</label>
-          <select id="card-add-mod" class="form-control"></select>
-        </div>
 
-        <div class="form-group">
-          <label class="form-label" for="card-add-unit">選擇單元</label>
-          <select id="card-add-unit" class="form-control"></select>
-        </div>
-        
-        <div class="form-group">
-          <label class="form-label" for="card-add-front">正面 (問題/概念名詞)</label>
-          <textarea id="card-add-front" rows="3" class="form-control" placeholder="輸入正面內容..."></textarea>
-        </div>
-        
-        <div class="form-group">
-          <label class="form-label" for="card-add-back">背面 (答案/公式與解析)</label>
-          <textarea id="card-add-back" rows="4" class="form-control" placeholder="輸入背面內容..."></textarea>
-        </div>
-        
-        <button id="btn-save-card" class="btn btn-primary" style="width: 100%;">
-          <span class="material-icons-round">save</span>
-          <span>儲存卡片</span>
-        </button>
+    <div class="surface-card" style="height: fit-content;">
+      <div class="card-header">
+        <h3 class="card-title">新增自建卡片</h3>
       </div>
+
+      <div class="form-group">
+        <label class="form-label" for="card-add-mod">選擇模組</label>
+        <select id="card-add-mod" class="form-control"></select>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="card-add-unit">選擇單元</label>
+        <select id="card-add-unit" class="form-control"></select>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="card-add-front">正面（問題 / 概念）</label>
+        <textarea id="card-add-front" rows="3" class="form-control" placeholder="輸入正面問題"></textarea>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="card-add-back">背面（解答 / 公式）</label>
+        <textarea id="card-add-back" rows="4" class="form-control" placeholder="輸入解答與 LaTeX 公式"></textarea>
+      </div>
+
+      <button id="btn-save-card" class="btn btn-primary" style="width: 100%;">
+        <span class="material-icons-round">save</span>
+        <span>儲存卡片</span>
+      </button>
     </div>
   </div>
 </template>
@@ -663,21 +629,18 @@
   <div class="page-header">
     <div class="page-title">
       <h2>口試模擬問答</h2>
-      <p>模擬學會證照口試。由 Gemini 考官出題，並在作答後從「完整度、正確性、邏輯、深度」四維度進行臨床評分。</p>
+      <p>模擬醫學物理師口試委員提問，並以完整度、正確性、邏輯、深度四維度評分</p>
     </div>
   </div>
-  
+
   <div class="grid-cols-3">
-    <!-- 左邊：口試進行區 -->
-    <div class="glass-card" style="grid-column: span 2; display: flex; flex-direction: column; min-height: 520px; justify-content: space-between;">
-      <!-- 1. 設定與開始口試 -->
-      <div id="oral-setup-box" style="display: flex; flex-direction: column; gap: 1.5rem; justify-content: center; height: 100%;">
-        <div style="text-align: center; margin-bottom: 1.5rem;">
-          <span class="material-icons-round" style="font-size: 4rem; color: var(--secondary);">forum</span>
-          <h3 style="margin-top: 1rem;">開啟 AI 口試問答</h3>
-          <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0.25rem;">選擇您想挑戰的學科與題型，進行口語組織練習。</p>
+    <div class="surface-card span-2" style="display: flex; flex-direction: column; min-height: 500px; justify-content: space-between;">
+      <div id="oral-setup-box" style="display: flex; flex-direction: column; gap: 20px; justify-content: center; height: 100%;">
+        <div>
+          <h3 style="font-size: 16px; font-weight: 600;">設定口試考科與題型</h3>
+          <p style="color: var(--text-muted); font-size: 13px; margin-top: 4px;">作答完畢後可將缺漏關鍵概念直接轉為 SM-2 閃卡複習</p>
         </div>
-        
+
         <div class="grid-cols-2">
           <div class="form-group">
             <label class="form-label" for="oral-mod-select">考科模組</label>
@@ -686,100 +649,95 @@
           <div class="form-group">
             <label class="form-label" for="oral-type-select">題型分類</label>
             <select id="oral-type-select">
-              <option value="clinical" selected>臨床情境題 (緊急處置/異常品管)</option>
+              <option value="clinical" selected>臨床情境題（異常品管 / 緊急處置）</option>
               <option value="concept">基本理論與概念解釋</option>
-              <option value="comparison">不同技術/協定比較分析</option>
+              <option value="comparison">不同技術 / 協定比較分析</option>
               <option value="calculation">核心公式與劑量口頭推導</option>
-              <option value="regulation">輻射防護設計與安全法規</option>
+              <option value="regulation">輻射防護設計與法規</option>
             </select>
           </div>
         </div>
-        
-        <button id="btn-start-oral" class="btn btn-accent" style="width: 100%; margin-top: 1rem;">
-          <span class="material-icons-round">bolt</span>
+
+        <button id="btn-start-oral" class="btn btn-primary" style="width: 100%;">
+          <span class="material-icons-round">auto_awesome</span>
           <span>生成口試題目</span>
         </button>
       </div>
-      
-      <!-- 2. 口試問答中 -->
-      <div id="oral-active-box" style="display: none; flex-direction: column; gap: 1.5rem; flex-grow: 1;">
-        <div style="display: flex; justify-content: space-between; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;">
-          <span style="font-weight: 700; color: var(--secondary);">AI 考官提問</span>
+
+      <div id="oral-active-box" style="display: none; flex-direction: column; gap: 16px; flex-grow: 1;">
+        <div style="display: flex; justify-content: space-between; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">
+          <span style="font-weight: 600; color: var(--accent);">AI 考官提問</span>
           <span class="badge badge-review" id="active-oral-type">臨床情境</span>
         </div>
-        
-        <div id="active-oral-question" style="font-size: 1.15rem; font-weight: 600; line-height: 1.6; padding: 1rem; background: rgba(255,255,255,0.02); border-radius: 12px; border: 1px solid var(--border-color);" class="markdown-view">
-          考題生成中...
-        </div>
-        
+
+        <div id="active-oral-question" class="sub-card markdown-view" style="font-size: 15px; font-weight: 500;">考題生成中</div>
+
         <div class="form-group" style="flex-grow: 1; display: flex; flex-direction: column;">
-          <label class="form-label" for="oral-user-answer">請在此輸入您的回答口述內容（建議思考後分段條列回答）：</label>
-          <textarea id="oral-user-answer" style="flex-grow: 1; min-height: 180px; resize: vertical;" class="form-control" placeholder="輸入您的作答內容，例如：\n1. 我會先確認游離腔... \n2. 接著依據 TG-51 協定..."></textarea>
+          <label class="form-label" for="oral-user-answer">口述回答草稿（建議依步驟條列）：</label>
+          <textarea id="oral-user-answer" style="flex-grow: 1; min-height: 180px; resize: vertical;" class="form-control" placeholder="1. 先確認...&#10;2. 依據 TG-51..."></textarea>
         </div>
-        
-        <div style="display: flex; gap: 0.75rem; justify-content: flex-end;">
+
+        <div style="display: flex; gap: 8px; justify-content: flex-end;">
           <button class="btn btn-secondary" onclick="showOralSetup()">放棄此題</button>
           <button id="btn-submit-oral" class="btn btn-primary">
             <span class="material-icons-round">send</span>
-            <span>提交口試答案</span>
+            <span>提交評分</span>
           </button>
         </div>
       </div>
-      
-      <!-- 3. 口試評分結果與檢討 -->
-      <div id="oral-report-box" style="display: none; flex-direction: column; gap: 1.5rem;">
-        <div class="card-header" style="padding-bottom: 0.5rem; margin-bottom: 0.5rem;">
-          <h3 class="card-title">
-            <span class="material-icons-round" style="color: var(--success);">fact_check</span>
-            <span>口試診斷報告</span>
-          </h3>
+
+      <div id="oral-report-box" style="display: none; flex-direction: column; gap: 16px;">
+        <div class="card-header" style="margin-bottom: 4px;">
+          <h3 class="card-title">口試診斷報告</h3>
+          <button id="btn-oral-to-card" class="btn btn-secondary btn-sm">
+            <span class="material-icons-round">style</span>
+            <span>缺漏重點轉閃卡</span>
+          </button>
         </div>
-        
-        <div class="glass-card" style="background: rgba(255, 255, 255, 0.02); padding: 1.25rem; border: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 0.85rem;">
+
+        <div class="sub-card" style="display: flex; flex-direction: column; gap: 12px;">
           <div>
-            <div style="font-size: 0.85rem; color: var(--secondary); font-weight: 700; margin-bottom: 0.35rem;">口試題目</div>
-            <div id="oral-report-question" style="font-size: 1.05rem; font-weight: 600; line-height: 1.6;" class="markdown-view">題目載入中...</div>
+            <div style="font-size: 12px; color: var(--accent); font-weight: 600; margin-bottom: 4px;">口試題目</div>
+            <div id="oral-report-question" class="markdown-view" style="font-size: 14px; font-weight: 500;"></div>
           </div>
-          
-          <div style="border-top: 1px solid rgba(255,255,255,0.06); padding-top: 0.85rem;">
-            <div style="font-size: 0.85rem; color: var(--text-muted); font-weight: 700; margin-bottom: 0.35rem;">我的作答</div>
-            <div id="oral-report-user-answer" style="font-size: 0.95rem; color: var(--text-muted); line-height: 1.6; white-space: pre-wrap; background: rgba(0, 0, 0, 0.2); padding: 1rem; border-radius: 8px;">作答內容載入中...</div>
-          </div>
-        </div>
-
-        <!-- 四維度分數 -->
-        <div class="grid-cols-4" style="gap: 0.75rem;">
-          <div class="glass-card" style="padding: 1rem; text-align: center; background: rgba(0,0,0,0.3);">
-            <div style="font-size: 0.75rem; color: var(--text-muted);">總分</div>
-            <div style="font-size: 1.75rem; font-weight: 800; color: var(--secondary);" id="oral-res-score">0</div>
-          </div>
-          <div class="glass-card" style="padding: 1rem; text-align: center; background: rgba(0,0,0,0.3);">
-            <div style="font-size: 0.75rem; color: var(--text-muted);">完整度 (25分)</div>
-            <div style="font-size: 1.25rem; font-weight: 700; color: var(--info);" id="oral-score-comp">0</div>
-          </div>
-          <div class="glass-card" style="padding: 1rem; text-align: center; background: rgba(0,0,0,0.3);">
-            <div style="font-size: 0.75rem; color: var(--text-muted);">正確性 (25分)</div>
-            <div style="font-size: 1.25rem; font-weight: 700; color: var(--success);" id="oral-score-acc">0</div>
-          </div>
-          <div class="glass-card" style="padding: 1rem; text-align: center; background: rgba(0,0,0,0.3);">
-            <div style="font-size: 0.75rem; color: var(--text-muted);">邏輯/深度 (50分)</div>
-            <div style="font-size: 1.25rem; font-weight: 700; color: var(--warning);"><span id="oral-score-log">0</span> / <span id="oral-score-dep">0</span></div>
+          <div style="border-top: 1px solid var(--border-color); padding-top: 10px;">
+            <div style="font-size: 12px; color: var(--text-muted); font-weight: 600; margin-bottom: 4px;">考生作答</div>
+            <div id="oral-report-user-answer" style="font-size: 13px; color: var(--text-muted); white-space: pre-wrap;"></div>
           </div>
         </div>
 
-        <div class="glass-card" style="padding: 1.25rem; background: rgba(0,0,0,0.3); border-left: 3px solid var(--primary);">
-          <div style="font-weight: 700; color: var(--primary); margin-bottom: 0.5rem;">考官詳細評語與改進建議</div>
-          <div id="oral-report-feedback" class="markdown-view" style="font-size: 0.95rem; color: var(--text-main); line-height: 1.6;"></div>
+        <div class="grid-cols-4">
+          <div class="sub-card" style="text-align: center;">
+            <div style="font-size: 12px; color: var(--text-muted);">總分</div>
+            <div class="mono-num" style="font-size: 24px; font-weight: 600; color: var(--accent);" id="oral-res-score">0</div>
+          </div>
+          <div class="sub-card" style="text-align: center;">
+            <div style="font-size: 12px; color: var(--text-muted);">完整度 / 25</div>
+            <div class="mono-num" style="font-size: 20px; font-weight: 600;" id="oral-score-comp">0</div>
+          </div>
+          <div class="sub-card" style="text-align: center;">
+            <div style="font-size: 12px; color: var(--text-muted);">正確性 / 25</div>
+            <div class="mono-num" style="font-size: 20px; font-weight: 600;" id="oral-score-acc">0</div>
+          </div>
+          <div class="sub-card" style="text-align: center;">
+            <div style="font-size: 12px; color: var(--text-muted);">邏輯 / 深度</div>
+            <div class="mono-num" style="font-size: 20px; font-weight: 600;"><span id="oral-score-log">0</span> / <span id="oral-score-dep">0</span></div>
+          </div>
         </div>
 
-        <div class="glass-card" style="padding: 1.25rem; background: rgba(0,0,0,0.3); border-left: 3px solid var(--danger);">
-          <div style="font-weight: 700; color: var(--danger); margin-bottom: 0.5rem;">回答中缺漏的關鍵概念 (Missing Points)</div>
-          <ul id="oral-report-missing-list" style="padding-left: 1.25rem; font-size: 0.9rem; color: var(--text-muted); line-height: 1.6;"></ul>
+        <div class="sub-card" style="border-left: 2px solid var(--accent);">
+          <div style="font-weight: 600; font-size: 13px; color: var(--accent); margin-bottom: 6px;">考官詳細評語</div>
+          <div id="oral-report-feedback" class="markdown-view" style="font-size: 13.5px;"></div>
         </div>
 
-        <div class="glass-card" style="padding: 1.25rem; background: rgba(0,0,0,0.3); border-left: 3px solid var(--success);">
-          <div style="font-weight: 700; color: var(--success); margin-bottom: 0.5rem;">標準參考解答 (Reference Answer)</div>
-          <div id="oral-report-ref-answer" class="markdown-view" style="font-size: 0.95rem; color: var(--text-muted); line-height: 1.6;"></div>
+        <div class="sub-card" style="border-left: 2px solid var(--danger);">
+          <div style="font-weight: 600; font-size: 13px; color: var(--danger); margin-bottom: 6px;">缺漏關鍵概念 (Missing Points)</div>
+          <ul id="oral-report-missing-list" style="padding-left: 18px; font-size: 13px; color: var(--text-muted);"></ul>
+        </div>
+
+        <div class="sub-card" style="border-left: 2px solid var(--success);">
+          <div style="font-weight: 600; font-size: 13px; color: var(--success); margin-bottom: 6px;">標準參考解答</div>
+          <div id="oral-report-ref-answer" class="markdown-view" style="font-size: 13.5px; color: var(--text-muted);"></div>
         </div>
 
         <button class="btn btn-primary" onclick="showOralSetup()" style="width: 100%;">
@@ -789,16 +747,12 @@
       </div>
     </div>
 
-    <!-- 右邊：歷史紀錄 -->
-    <div class="glass-card" style="grid-column: span 1; min-width: 0; overflow: hidden;">
+    <div class="surface-card" style="min-width: 0;">
       <div class="card-header">
-        <h3 class="card-title">
-          <span class="material-icons-round">history</span>
-          <span>口試練習紀錄</span>
-        </h3>
+        <h3 class="card-title">口試練習紀錄</h3>
       </div>
-      <div id="oral-history-list" style="display: flex; flex-direction: column; gap: 0.75rem; max-height: 500px; overflow-y: auto;">
-        <div style="text-align: center; color: var(--text-dark); padding: 2rem;">載入中...</div>
+      <div id="oral-history-list" style="display: flex; flex-direction: column; gap: 8px; max-height: 520px; overflow-y: auto;">
+        <div style="text-align: center; color: var(--text-dark); padding: 24px;">載入中</div>
       </div>
     </div>
   </div>
@@ -808,50 +762,42 @@
 <template id="template-journal">
   <div class="page-header">
     <div class="page-title">
-      <h2>學習日誌與回顧</h2>
-      <p>凡走過必留下痕跡。在此檢視您的歷史學習時數統計、讀書心得，並可手動補登外部學習時間與筆記。</p>
+      <h2>學習日誌與時數紀錄</h2>
+      <p>檢視每次計時與手動補登的研讀紀錄與重點心得</p>
     </div>
   </div>
-  
+
   <div class="grid-cols-3">
-    <div class="glass-card" style="grid-column: span 2; display: flex; flex-direction: column;">
+    <div class="surface-card span-2">
       <div class="card-header">
-        <h3 class="card-title">
-          <span class="material-icons-round">history_edu</span>
-          <span>研讀日誌歷史</span>
-        </h3>
+        <h3 class="card-title">研讀日誌歷史</h3>
       </div>
-      <div id="journal-list-container" style="display: flex; flex-direction: column; gap: 1rem; max-height: 520px; overflow-y: auto; padding-right: 0.5rem;">
-        <div style="text-align: center; color: var(--text-dark); padding: 3rem;">載入日誌中...</div>
+      <div id="journal-list-container" style="display: flex; flex-direction: column; gap: 10px; max-height: 540px; overflow-y: auto; padding-right: 4px;">
+        <div style="text-align: center; color: var(--text-dark); padding: 32px;">載入日誌中</div>
       </div>
     </div>
-    
-    <div class="glass-card" style="grid-column: span 1; display: flex; flex-direction: column; justify-content: space-between; height: fit-content;">
-      <div>
-        <div class="card-header">
-          <h3 class="card-title">
-            <span class="material-icons-round">edit_calendar</span>
-            <span>手動補登學習時數</span>
-          </h3>
-        </div>
-        
-        <div class="form-group">
-          <label class="form-label" for="journal-add-unit">對應學習單元</label>
-          <select id="journal-add-unit"></select>
-        </div>
-        
-        <div class="form-group">
-          <label class="form-label" for="journal-add-minutes">學習時間 (分鐘)</label>
-          <input type="number" id="journal-add-minutes" class="form-control" value="30" min="5" max="480">
-        </div>
-        
-        <div class="form-group">
-          <label class="form-label" for="journal-add-notes">學習心得與重點筆記</label>
-          <textarea id="journal-add-notes" rows="8" class="form-control" placeholder="寫下今天的學習收穫、公式心得、需要加強的觀念..."></textarea>
-        </div>
+
+    <div class="surface-card" style="height: fit-content;">
+      <div class="card-header">
+        <h3 class="card-title">手動補登學習時數</h3>
       </div>
-      
-      <button id="btn-save-journal" class="btn btn-primary" style="width: 100%; margin-top: 1rem;">
+
+      <div class="form-group">
+        <label class="form-label" for="journal-add-unit">對應學習單元</label>
+        <select id="journal-add-unit"></select>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="journal-add-minutes">學習時間 (分鐘)</label>
+        <input type="number" id="journal-add-minutes" class="form-control" value="30" min="5" max="480">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="journal-add-notes">研讀心得與筆記</label>
+        <textarea id="journal-add-notes" rows="7" class="form-control" placeholder="記錄重要公式、易混淆觀念或文獻重點"></textarea>
+      </div>
+
+      <button id="btn-save-journal" class="btn btn-primary" style="width: 100%;">
         <span class="material-icons-round">save</span>
         <span>儲存日誌</span>
       </button>
@@ -859,148 +805,169 @@
   </div>
 </template>
 
-<!-- 8. 系統設定 Template -->
+<!-- 8. 系統設定與 Firebase 遷移 Template -->
 <template id="template-settings">
   <div class="page-header">
     <div class="page-title">
-      <h2>系統設定與資料庫管理</h2>
-      <p>管理您的備考參數、Gemini AI 連線、Firebase 資料庫連線與備份還原</p>
+      <h2>系統設定與 Firebase 資料庫遷移</h2>
+      <p>管理備考參數、Gemini API 金鑰、Firebase 雲端連線與舊資料一鍵搬移</p>
     </div>
   </div>
-  
+
   <div class="grid-cols-2">
     <!-- 個人學習參數 -->
-    <div class="glass-card">
+    <div class="surface-card">
       <div class="card-header">
-        <h3 class="card-title">
-          <span class="material-icons-round">edit_calendar</span>
-          <span>個人學習參數</span>
-        </h3>
+        <h3 class="card-title">個人學習參數</h3>
       </div>
-      
+
       <div class="form-group">
         <label class="form-label" for="input-exam-date">預計考試日期</label>
         <input type="date" id="input-exam-date" class="form-control">
       </div>
-      
+
       <div class="form-group">
         <label class="form-label" for="input-start-date">學習計劃開始日</label>
         <input type="date" id="input-start-date" class="form-control">
       </div>
-      
+
       <div class="form-group">
         <label class="form-label" for="input-daily-goal">每日學習目標 (分鐘)</label>
         <input type="number" id="input-daily-goal" class="form-control" min="15" max="480">
       </div>
-      
+
       <div class="form-group">
         <label class="form-label" for="input-notebook-url">NotebookLM 筆記本網址</label>
         <input type="url" id="input-notebook-url" class="form-control" placeholder="https://notebooklm.google.com/notebook/...">
       </div>
-      
+
       <button id="btn-save-params" class="btn btn-primary" style="width: 100%;">
         <span class="material-icons-round">save</span>
         <span>儲存學習參數</span>
       </button>
     </div>
-    
+
     <!-- Gemini AI 設定 -->
-    <div class="glass-card">
+    <div class="surface-card">
       <div class="card-header">
-        <h3 class="card-title">
-          <span class="material-icons-round">api</span>
-          <span>Gemini AI 連線設定</span>
-        </h3>
+        <h3 class="card-title">Gemini AI 連線設定</h3>
       </div>
-      
+
       <div class="form-group">
         <label class="form-label" for="input-api-key">Gemini API Key</label>
-        <input type="password" id="input-api-key" class="form-control" placeholder="輸入您的 Gemini API 金鑰 (例如: AIzaSy...)">
-        <p style="font-size: 0.75rem; color: var(--text-dark); margin-top: 0.25rem;">
-          金鑰僅儲存在您的瀏覽器本機與授權資料庫中，前端直連 Google Gemini REST API。
+        <input type="password" id="input-api-key" class="form-control" placeholder="AIzaSy...">
+        <p style="font-size: 12px; color: var(--text-dark); margin-top: 6px;">
+          金鑰僅儲存於您的瀏覽器本機與授權雲端資料庫，不會寫入 GitHub 程式碼。
         </p>
       </div>
-      
+
       <div class="form-group">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
           <label class="form-label" for="select-model" style="margin-bottom: 0;">AI 模型 (動態優選前 5 款)</label>
-          <button type="button" id="btn-refresh-models" class="btn btn-secondary" style="padding: 0.25rem 0.6rem; font-size: 0.75rem;">
-            <span class="material-icons-round" style="font-size: 0.9rem;">sync</span>
+          <button type="button" id="btn-refresh-models" class="btn btn-secondary btn-sm">
+            <span class="material-icons-round">sync</span>
             <span>即時同步</span>
           </button>
         </div>
-        <select id="select-model">
-          <option value="gemini-2.5-flash" selected>gemini-2.5-flash (推薦: 最新極速且精準，性價比首選)</option>
-          <option value="gemini-2.5-pro">gemini-2.5-pro (頂級旗艦: 複雜公式推導與口試首選)</option>
-          <option value="gemini-2.0-flash">gemini-2.0-flash (高速穩定: 日常題庫練習首選)</option>
-          <option value="gemini-2.0-pro-exp-02-05">gemini-2.0-pro-exp-02-05 (高精確深度分析: 適合臨床評估)</option>
-          <option value="gemini-1.5-pro">gemini-1.5-pro (長文本旗艦: 適合大篇幅文獻研讀)</option>
-        </select>
-        <p id="model-status-hint" style="font-size: 0.75rem; color: var(--text-dark); margin-top: 0.35rem;">
-          系統已依據即時效能與適用度為您自動載入前 5 款最佳模型。
+        <select id="select-model"></select>
+        <p id="model-status-hint" style="font-size: 12px; color: var(--text-dark); margin-top: 6px;">
+          系統已載入預設模型清單
         </p>
       </div>
-      
-      <button id="btn-save-ai" class="btn btn-accent" style="width: 100%;">
-        <span class="material-icons-round">bolt</span>
+
+      <button id="btn-save-ai" class="btn btn-primary" style="width: 100%;">
+        <span class="material-icons-round">save</span>
         <span>儲存 AI 連線設定</span>
       </button>
     </div>
   </div>
 
-  <!-- Firebase 設定與資料庫維護 -->
-  <div class="grid-cols-2" style="margin-top: 1.5rem;">
-    <!-- Firebase 連線 -->
-    <div class="glass-card">
+  <!-- Firebase 連線與資料庫搬移 -->
+  <div class="grid-cols-2" style="margin-top: 16px;">
+    <div class="surface-card">
       <div class="card-header">
-        <h3 class="card-title">
-          <span class="material-icons-round">cloud</span>
-          <span>Firebase Cloud Firestore 設定</span>
-        </h3>
-        <span id="fb-connection-status" class="badge badge-todo">檢測中...</span>
-      </div>
-      
-      <div class="form-group">
-        <label class="form-label" for="input-fb-project-id">Firebase Project ID</label>
-        <input type="text" id="input-fb-project-id" class="form-control" placeholder="例如: medical-physicist-study">
+        <h3 class="card-title">Firebase Cloud Firestore 連線</h3>
+        <span id="fb-connection-status" class="badge badge-todo">檢測中</span>
       </div>
 
       <div class="form-group">
-        <label class="form-label" for="input-fb-api-key">Firebase Web API Key</label>
-        <input type="password" id="input-fb-api-key" class="form-control" placeholder="例如: AIzaSy...">
+        <label class="form-label" for="input-fb-paste">快速貼上整段 firebaseConfig（選填，貼上後自動拆解）</label>
+        <textarea id="input-fb-paste" rows="3" class="form-control mono-num" placeholder='貼上從 Firebase Console 複製的 const firebaseConfig = { apiKey: "...", projectId: "..." };'></textarea>
       </div>
 
-      <button id="btn-save-fb" class="btn btn-secondary" style="width: 100%;">
-        <span class="material-icons-round">sync</span>
-        <span>儲存並重新連線 Firebase</span>
-      </button>
+      <div class="grid-cols-2">
+        <div class="form-group">
+          <label class="form-label" for="input-fb-project-id">Firebase Project ID</label>
+          <input type="text" id="input-fb-project-id" class="form-control mono-num" placeholder="medical-physicist-study">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="input-fb-api-key">Firebase Web API Key</label>
+          <input type="password" id="input-fb-api-key" class="form-control mono-num" placeholder="AIzaSy...">
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+        <button id="btn-save-fb" class="btn btn-primary" style="flex: 1;">
+          <span class="material-icons-round">cloud_done</span>
+          <span>儲存並驗證連線</span>
+        </button>
+        <button id="btn-clear-fb" class="btn btn-secondary" title="切換回純本機離線模式">
+          <span>重設連線</span>
+        </button>
+      </div>
+
+      <div id="fb-stats-panel" style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-color);">
+        <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 6px;">本機 vs. Firebase 雲端資料筆數對照</div>
+        <div class="sync-stats-grid" id="fb-stats-grid"></div>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px;">
+          <button id="btn-push-local-fb" class="btn btn-secondary btn-sm" style="flex: 1;">
+            <span class="material-icons-round">cloud_upload</span>
+            <span>本機資料推送上雲</span>
+          </button>
+          <button id="btn-pull-fb-local" class="btn btn-secondary btn-sm" style="flex: 1;">
+            <span class="material-icons-round">cloud_download</span>
+            <span>從雲端下載同步</span>
+          </button>
+        </div>
+      </div>
     </div>
 
-    <!-- 完整備份與還原 -->
-    <div class="glass-card">
-      <div class="card-header">
-        <h3 class="card-title">
-          <span class="material-icons-round">cloud_download</span>
-          <span>資料庫完整備份與還原 (JSON)</span>
-        </h3>
-      </div>
-      <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1.25rem;">
-        一鍵將您的課綱、進度、題庫、SM-2 知識卡片、測驗與口試紀錄匯出為單一 JSON 檔案，或還原至本系統中。
-      </p>
-      
-      <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
-        <button id="btn-export-backup" class="btn btn-primary" style="flex: 1;">
-          <span class="material-icons-round">download</span>
-          <span>匯出備份 (JSON)</span>
-        </button>
-        <label class="btn btn-secondary" style="flex: 1; cursor: pointer; text-align: center;">
-          <span class="material-icons-round">upload</span>
-          <span>還原資料庫 (JSON)</span>
-          <input type="file" id="input-import-backup" accept=".json" style="display: none;">
-        </label>
+    <!-- 舊版 Google Sheet 直連搬移 & JSON 備份 -->
+    <div class="surface-card" style="display: flex; flex-direction: column; justify-content: space-between; gap: 16px;">
+      <div>
+        <div class="card-header">
+          <h3 class="card-title">舊資料搬移至 Firebase (Google Sheet / JSON)</h3>
+        </div>
+
+        <div class="sub-card" style="margin-bottom: 16px;">
+          <div style="font-size: 13px; font-weight: 600; margin-bottom: 6px;">從舊版 Google Sheet 試算表直連搬移</div>
+          <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px;">
+            暫時將試算表共用權限設為「知道連結的任何人可檢視」，點擊下方按鈕即可免後端直連拉取 8 張工作表並寫入 Firebase（搬完即可改回私人）。
+          </p>
+          <div class="form-group" style="margin-bottom: 8px;">
+            <label class="form-label" for="input-gsheet-id">Google Sheet ID 或完整網址</label>
+            <input type="text" id="input-gsheet-id" class="form-control mono-num" value="1-ATEDk8TtYZRA0gdOFfgzp5ZIYpYWzSRHvcE5eaYcnQ">
+          </div>
+          <button id="btn-migrate-gsheet" class="btn btn-primary" style="width: 100%;">
+            <span class="material-icons-round">move_up</span>
+            <span>一鍵從 Google Sheet 搬移至 Firebase</span>
+          </button>
+        </div>
+
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <button id="btn-export-backup" class="btn btn-secondary" style="flex: 1;">
+            <span class="material-icons-round">download</span>
+            <span>匯出備份 (JSON)</span>
+          </button>
+          <label class="btn btn-secondary" style="flex: 1; cursor: pointer;">
+            <span class="material-icons-round">upload</span>
+            <span>還原備份 (JSON)</span>
+            <input type="file" id="input-import-backup" accept=".json" style="display: none;">
+          </label>
+        </div>
       </div>
 
-      <div style="margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">
+      <div style="padding-top: 12px; border-top: 1px solid var(--border-color);">
         <button id="btn-init-db" class="btn btn-danger" style="width: 100%;">
           <span class="material-icons-round">restart_alt</span>
           <span>初始化 / 修復 37 單元課綱結構</span>
@@ -1011,97 +978,110 @@
 </template>
 
 <!-- ========================================== -->
-<!-- 原生 HTML5 <dialog> 彈窗 (Ponytail Audit 優化) -->
+<!-- 原生 HTML5 <dialog> 彈窗 -->
 <!-- ========================================== -->
 
-<!-- 彈出視窗：更新進度/筆記 -->
+<!-- 更新進度/筆記 -->
 <dialog id="progress-modal" class="modal-dialog">
   <div class="modal-content">
     <div class="modal-header">
-      <h3>更新學習進度</h3>
-      <span class="modal-close" onclick="closeProgressModal()">&times;</span>
+      <h3 id="progress-modal-title">更新學習進度</h3>
+      <button class="modal-close" onclick="closeProgressModal()" aria-label="關閉">&times;</button>
     </div>
     <input type="hidden" id="modal-unit-id">
-    
+
     <div class="form-group">
       <label class="form-label" for="modal-status">學習狀態</label>
       <select id="modal-status">
-        <option value="not_started">未開始 (Not Started)</option>
-        <option value="in_progress">進行中 (In Progress)</option>
-        <option value="completed">已完成 (Completed)</option>
-        <option value="review">需要複習 (Need Review)</option>
+        <option value="not_started">未開始</option>
+        <option value="in_progress">進行中</option>
+        <option value="completed">已完成</option>
+        <option value="review">需要複習</option>
       </select>
     </div>
-    
+
     <div class="form-group">
-      <label class="form-label" for="modal-add-minutes">手動新增學習時間 (分鐘)</label>
-      <input type="number" id="modal-add-minutes" class="form-control" value="0" min="0">
+      <label class="form-label" for="modal-add-minutes">新增學習時間 (分鐘)</label>
+      <input type="number" id="modal-add-minutes" class="form-control mono-num" value="0" min="0">
     </div>
-    
+
     <div class="form-group">
       <label class="form-label" for="modal-notes">研讀筆記與重點摘要</label>
-      <textarea id="modal-notes" rows="6" class="form-control" placeholder="請在此記錄您的讀書筆記、公式推導摘要或重要筆記..."></textarea>
+      <textarea id="modal-notes" rows="6" class="form-control" placeholder="記錄重點公式、推導或常考陷阱"></textarea>
     </div>
-    
-    <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem;">
+
+    <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeProgressModal()">取消</button>
       <button id="btn-submit-modal" class="btn btn-primary">儲存變更</button>
     </div>
   </div>
 </dialog>
 
-<!-- 彈出視窗：AI 生成複習卡 -->
+<!-- 標準物理圖解檢視 -->
+<dialog id="diagram-modal" class="modal-dialog">
+  <div class="modal-content" style="max-width: 780px; display: flex; flex-direction: column; max-height: 88vh;">
+    <div class="modal-header">
+      <h3 id="diagram-modal-title">標準醫學物理圖解</h3>
+      <button class="modal-close" onclick="closeDiagramModal()" aria-label="關閉">&times;</button>
+    </div>
+    <div id="diagram-modal-body" style="overflow-y: auto; padding-right: 4px;"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeDiagramModal()">關閉</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- AI 生卡 -->
 <dialog id="ai-card-modal" class="modal-dialog">
   <div class="modal-content">
     <div class="modal-header">
       <h3>AI 快速生成知識卡片</h3>
-      <span class="modal-close" onclick="closeAICardModal()">&times;</span>
+      <button class="modal-close" onclick="closeAICardModal()" aria-label="關閉">&times;</button>
     </div>
     <input type="hidden" id="ai-modal-mod-id">
     <input type="hidden" id="ai-modal-unit-id">
-    
+
     <div class="form-group">
-      <label class="form-label">請貼上文獻重點段落或您的讀書摘要：</label>
-      <textarea id="ai-card-text" rows="8" class="form-control" placeholder="貼上文獻內容（英文亦可，AI 會翻譯並提煉重點）...例如：The TG-51 protocol for clinical reference dosimetry of high energy photon beams specifies that the calibration must be done in water..."></textarea>
+      <label class="form-label">貼上文獻重點段落或讀書摘要（中英文皆可）：</label>
+      <textarea id="ai-card-text" rows="8" class="form-control" placeholder="貼上段落內容，AI 將提煉 3–5 張雙面記憶卡片"></textarea>
     </div>
-    
-    <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem;">
+
+    <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeAICardModal()">取消</button>
-      <button id="btn-submit-ai-card" class="btn btn-accent">
-        <span class="material-icons-round">bolt</span>
+      <button id="btn-submit-ai-card" class="btn btn-primary">
+        <span class="material-icons-round">auto_awesome</span>
         <span>生成複習卡</span>
       </button>
     </div>
   </div>
 </dialog>
 
-<!-- 彈出視窗：NotebookLM 提示詞 -->
+<!-- NotebookLM 提示詞 -->
 <dialog id="notebooklm-modal" class="modal-dialog">
-  <div class="modal-content" style="max-width: 700px; display: flex; flex-direction: column; max-height: 85vh;">
+  <div class="modal-content" style="max-width: 700px; display: flex; flex-direction: column; max-height: 86vh;">
     <div class="modal-header">
       <h3 id="notebooklm-modal-title">NotebookLM 學習提示詞</h3>
-      <span class="modal-close" onclick="closeNotebookLMModal()">&times;</span>
+      <button class="modal-close" onclick="closeNotebookLMModal()" aria-label="關閉">&times;</button>
     </div>
-    
-    <div style="flex-grow: 1; overflow-y: auto; margin-bottom: 1.5rem;">
-      <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">
-        請複製下方專門為此單元優化的 **AI 提示詞**，然後點選右下角按鈕前往您的 NotebookLM 筆記本。在對話框中貼上此提示詞，即可讓 NotebookLM 根據您所上傳的 PDF 檔案生成最精確的內容整理與公式推導。
+
+    <div style="flex-grow: 1; overflow-y: auto;">
+      <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 12px;">
+        複製下方提示詞並貼至您的 NotebookLM 筆記本，即可根據已上傳文獻 PDF 生成公式推導與品管規範整理。
       </p>
-      
       <div class="form-group">
-        <label class="form-label">單元專屬 NotebookLM 提示詞：</label>
-        <textarea id="notebooklm-prompt-text" rows="12" class="form-control" style="font-family: inherit; font-size: 0.9rem; line-height: 1.5; background: var(--bg-primary); border-color: var(--primary);" readonly></textarea>
+        <label class="form-label">單元專屬提示詞</label>
+        <textarea id="notebooklm-prompt-text" rows="12" class="form-control" readonly></textarea>
       </div>
     </div>
-    
-    <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border-color); padding-top: 1rem;">
+
+    <div class="modal-footer modal-footer-between">
       <button class="btn btn-primary" onclick="copyNotebookLMPrompt()">
         <span class="material-icons-round">content_copy</span>
         <span>複製提示詞</span>
       </button>
-      <div style="display: flex; gap: 0.75rem;">
+      <div style="display: flex; gap: 8px;">
         <button class="btn btn-secondary" onclick="closeNotebookLMModal()">關閉</button>
-        <a id="btn-open-notebooklm" class="btn btn-accent" target="_blank" href="#" style="text-decoration: none;">
+        <a id="btn-open-notebooklm" class="btn btn-secondary" target="_blank" rel="noopener" href="#">
           <span class="material-icons-round">open_in_new</span>
           <span>前往 NotebookLM</span>
         </a>
@@ -1110,31 +1090,31 @@
   </div>
 </dialog>
 
-<!-- 彈出視窗：隨堂測驗 -->
+<!-- 隨堂測驗 -->
 <dialog id="unit-quiz-modal" class="modal-dialog">
-  <div class="modal-content" style="max-width: 700px; display: flex; flex-direction: column; max-height: 85vh;">
+  <div class="modal-content" style="max-width: 740px; display: flex; flex-direction: column; max-height: 88vh;">
     <div class="modal-header">
       <h3 id="quiz-modal-title">隨堂測驗</h3>
-      <span class="modal-close" onclick="closeUnitQuizModal()">&times;</span>
+      <button class="modal-close" onclick="closeUnitQuizModal()" aria-label="關閉">&times;</button>
     </div>
-    
-    <div id="quiz-modal-body" style="flex-grow: 1; overflow-y: auto; padding-right: 0.5rem; margin-bottom: 1.5rem;"></div>
-    
-    <div style="display: flex; justify-content: flex-end; gap: 0.75rem; border-top: 1px solid var(--border-color); padding-top: 1rem;" id="quiz-modal-footer">
+
+    <div id="quiz-modal-body" style="flex-grow: 1; overflow-y: auto; padding-right: 4px;"></div>
+
+    <div class="modal-footer" id="quiz-modal-footer">
       <button class="btn btn-secondary" onclick="closeUnitQuizModal()">關閉</button>
       <button id="btn-submit-unit-quiz" class="btn btn-primary">提交測驗</button>
     </div>
   </div>
 </dialog>
 
-<!-- 彈出視窗：手動新增題目 -->
+<!-- 手動新增題目 -->
 <dialog id="add-q-modal" class="modal-dialog">
-  <div class="modal-content" style="max-width: 700px; max-height: 90vh; overflow-y: auto;">
+  <div class="modal-content" style="max-width: 720px; max-height: 90vh; overflow-y: auto;">
     <div class="modal-header">
       <h3>手動新增題目</h3>
-      <span class="modal-close" onclick="closeAddQuestionModal()">&times;</span>
+      <button class="modal-close" onclick="closeAddQuestionModal()" aria-label="關閉">&times;</button>
     </div>
-    
+
     <div class="grid-cols-2">
       <div class="form-group">
         <label class="form-label" for="manual-q-mod">模組</label>
@@ -1160,12 +1140,12 @@
         </select>
       </div>
     </div>
-    
+
     <div class="form-group">
-      <label class="form-label" for="manual-q-text">題目敘述 (支援 LaTeX 與 SVG)</label>
-      <textarea id="manual-q-text" rows="3" class="form-control" placeholder="輸入題目內容..."></textarea>
+      <label class="form-label" for="manual-q-text">題目敘述 (支援 LaTeX 與圖表規格)</label>
+      <textarea id="manual-q-text" rows="3" class="form-control"></textarea>
     </div>
-    
+
     <div class="grid-cols-2">
       <div class="form-group">
         <label class="form-label" for="manual-q-optA">選項 A</label>
@@ -1184,7 +1164,7 @@
         <input type="text" id="manual-q-optD" class="form-control">
       </div>
     </div>
-    
+
     <div class="grid-cols-2">
       <div class="form-group">
         <label class="form-label" for="manual-q-ans">正確答案</label>
@@ -1200,13 +1180,13 @@
         <input type="text" id="manual-q-ref" class="form-control" placeholder="例如: TG-51 Sec. III">
       </div>
     </div>
-    
+
     <div class="form-group">
       <label class="form-label" for="manual-q-exp">詳細解析</label>
-      <textarea id="manual-q-exp" rows="3" class="form-control" placeholder="輸入解析說明..."></textarea>
+      <textarea id="manual-q-exp" rows="3" class="form-control"></textarea>
     </div>
-    
-    <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem;">
+
+    <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeAddQuestionModal()">取消</button>
       <button id="btn-save-manual-q" class="btn btn-primary">儲存題目</button>
     </div>
@@ -1219,6 +1199,7 @@
 <script src="js/syllabus-data.js"></script>
 <script src="js/firebase-config.js"></script>
 <script src="js/db.js"></script>
+<script src="js/diagrams.js"></script>
 <script src="js/gemini.js"></script>
 <script src="js/charts.js"></script>
 <script src="js/timer.js"></script>
@@ -1226,47 +1207,75 @@
 <script src="js/router.js"></script>
 
 <script>
-  // 全局 Toast 提示
   function showToast(message, type = 'info') {
     const toast = document.getElementById('toast');
     const icon = document.getElementById('toast-icon');
     const msgSpan = document.getElementById('toast-message');
     if (!toast || !icon || !msgSpan) return;
-    
+
     toast.className = `toast show ${type}`;
     msgSpan.innerText = message;
-    
+
     if (type === 'success') icon.innerText = 'check_circle';
     else if (type === 'error') icon.innerText = 'error';
     else if (type === 'warning') icon.innerText = 'warning';
     else icon.innerText = 'info';
-    
-    setTimeout(() => {
+
+    clearTimeout(window._toastTimer);
+    window._toastTimer = setTimeout(() => {
       toast.classList.remove('show');
     }, 3200);
   }
 
-  // MathJax 公式重新排版渲染
-  function renderMath() {
+  function renderMath(targetEl) {
+    if (typeof Diagrams !== 'undefined') {
+      Diagrams.hydrateContainer(targetEl || document.getElementById('app-view'));
+    }
     if (window.MathJax && MathJax.typesetPromise) {
-      MathJax.typesetPromise().catch((err) => console.log('MathJax error: ' + err.message));
+      const nodes = targetEl ? [targetEl] : undefined;
+      MathJax.typesetPromise(nodes).catch((err) => console.log('MathJax error: ' + err.message));
     }
   }
 
-  // 綁定行動版側邊欄開關
+  function syncThemeUI() {
+    const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+    const dIcon = document.getElementById('theme-icon-desktop');
+    const dLabel = document.getElementById('theme-label-desktop');
+    const mIcon = document.getElementById('theme-icon-mobile');
+    if (dIcon) dIcon.innerText = isLight ? 'dark_mode' : 'light_mode';
+    if (dLabel) dLabel.innerText = isLight ? '深色臨床模式' : '淺色紙本模式';
+    if (mIcon) mIcon.innerText = isLight ? 'dark_mode' : 'light_mode';
+  }
+
+  function toggleTheme() {
+    const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+    if (isLight) {
+      document.documentElement.removeAttribute('data-theme');
+      localStorage.setItem('mp_theme', 'dark');
+    } else {
+      document.documentElement.setAttribute('data-theme', 'light');
+      localStorage.setItem('mp_theme', 'light');
+    }
+    syncThemeUI();
+    if (typeof redrawActiveCharts === 'function') {
+      redrawActiveCharts();
+    }
+  }
+
   document.addEventListener('DOMContentLoaded', () => {
+    syncThemeUI();
+    if (typeof StudyTimer !== 'undefined') {
+      StudyTimer.restoreIfRunning();
+    }
+
     const btnToggle = document.getElementById('btn-sidebar-toggle');
     const overlay = document.getElementById('sidebar-overlay');
-    
     if (btnToggle) btnToggle.onclick = toggleSidebar;
     if (overlay) overlay.onclick = toggleSidebar;
-    
-    const navItems = document.querySelectorAll('.nav-menu .nav-item');
-    navItems.forEach(item => {
+
+    document.querySelectorAll('.nav-menu .nav-item').forEach((item) => {
       item.addEventListener('click', () => {
-        if (window.innerWidth <= 768) {
-          closeSidebar();
-        }
+        if (window.innerWidth <= 768) closeSidebar();
       });
     });
   });
