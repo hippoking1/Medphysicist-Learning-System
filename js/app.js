@@ -561,8 +561,10 @@ async function loadPracticePage() {
       const cnt = document.getElementById('practice-count-select').value;
 
       btnGen.disabled = true;
+      const origHtml = btnGen.innerHTML;
+      btnGen.innerHTML = '<span class="material-icons-round">hourglass_top</span><span>Gemini 出題中...</span>';
       try {
-        showToast('Gemini AI 正在生成題目', 'info');
+        showToast('Gemini AI 正在生成題目（約需 15–60 秒）', 'info');
         const qs = await GeminiService.generateAIQuestions(mId, tId, cnt, diff, uId);
         showToast(`成功生成 ${qs.length} 道題目`, 'success');
         loadPracticeQuestionsList();
@@ -570,6 +572,7 @@ async function loadPracticePage() {
         showToast('出題失敗：' + e.message, 'error');
       } finally {
         btnGen.disabled = false;
+        btnGen.innerHTML = origHtml;
       }
     };
   }

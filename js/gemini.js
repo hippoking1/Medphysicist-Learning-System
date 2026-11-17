@@ -7,7 +7,7 @@ const GeminiService = {
   /**
    * 呼叫 Gemini REST API 的共用核心函數
    */
-  async callGeminiAPI(prompt, systemInstruction) {
+  async callGeminiAPI(prompt, systemInstruction, timeoutMs = 120000) {
     const apiKey = await DB.getConfig('geminiApiKey');
     if (!apiKey || apiKey.trim() === '') {
       throw new Error('未設定 Gemini API Key，請先前往「系統設定」頁面填寫 API 金鑰。');
@@ -31,7 +31,7 @@ const GeminiService = {
     }
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 45000);
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     let response;
     try {
@@ -44,7 +44,7 @@ const GeminiService = {
     } catch (fetchErr) {
       clearTimeout(timeoutId);
       if (fetchErr.name === 'AbortError') {
-        throw new Error('Gemini API 請求逾時（超過 45 秒），請檢查網路狀態或重試。');
+        throw new Error(`Gemini API 請求逾時（超過 ${Math.round(timeoutMs / 1000)} 秒），建議減少單次出題數或切換至 Flash 模型後重試。`);
       }
       throw new Error('無法連線至 Gemini API: ' + fetchErr.message);
     }
