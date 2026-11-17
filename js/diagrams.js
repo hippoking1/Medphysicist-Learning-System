@@ -387,7 +387,12 @@ const Diagrams = {
    */
   formatStudyGuide(rawText, unitId = '') {
     if (!rawText || !rawText.trim()) return '';
-    let text = rawText.replace(/\r\n/g, '\n').trim();
+    // 清理 NotebookLM 剪貼簿常見之零寬字元與不換行空格
+    let text = rawText
+      .replace(/[\u200B-\u200D\uFEFF]/g, '')
+      .replace(/\u00A0/g, ' ')
+      .replace(/\r\n/g, '\n')
+      .trim();
 
     // 1. 保護 LaTeX 公式 ($$...$$, \[...\], \(...\), $...$) 避免底線 _ 與星號 * 被 Markdown 破壞
     const mathTokens = [];
@@ -601,9 +606,10 @@ const Diagrams = {
       }
     }
 
-    // 6. 還原保護的 LaTeX 數學公式
+    // 6. 還原保護的 LaTeX 數學公式（跳脫 < > 防止如 $a<b$ 被瀏覽器誤判為 HTML 標籤）
     mathTokens.forEach((mathStr, idx) => {
-      htmlOut = htmlOut.replace(`@@MP_MATH_${idx}@@`, () => mathStr);
+      const safeMath = mathStr.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      htmlOut = htmlOut.replace(`@@MP_MATH_${idx}@@`, () => safeMath);
     });
 
     return htmlOut;

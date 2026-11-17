@@ -18,16 +18,46 @@
   <!-- Material Icons -->
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
 
-  <!-- MathJax Configuration -->
+  <!-- MathJax Configuration (含啟動排隊、重複排版清除與備援 CDN) -->
   <script>
+    window._mathJaxChain = null;
+    window._pendingMathTargets = new Set();
     window.MathJax = {
       tex: {
         inlineMath: [['$', '$'], ['\\(', '\\)']],
-        displayMath: [['$$', '$$'], ['\\[', '\\]']]
+        displayMath: [['$$', '$$'], ['\\[', '\\]']],
+        processEscapes: true,
+        processEnvironments: true
+      },
+      options: {
+        skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+      },
+      startup: {
+        typeset: false,
+        ready: function () {
+          MathJax.startup.defaultReady();
+          if (window._pendingMathTargets.size > 0) {
+            const targets = Array.from(window._pendingMathTargets).filter((el) => document.contains(el));
+            window._pendingMathTargets.clear();
+            if (targets.length > 0) renderMath(targets[targets.length - 1]);
+          } else {
+            const appView = document.getElementById('app-view');
+            if (appView) renderMath(appView);
+          }
+        }
       }
     };
+
+    function loadMathJaxFallback() {
+      if (window._mathJaxFallbackTried) return;
+      window._mathJaxFallbackTried = true;
+      var s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-mml-chtml.min.js';
+      s.async = true;
+      document.head.appendChild(s);
+    }
   </script>
-  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" onerror="loadMathJaxFallback()"></script>
 
   <!-- Firebase Compat Web SDK (v10.8.0) -->
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
@@ -1436,12 +1466,22 @@
   }
 
   function renderMath(targetEl) {
-    if (typeof Diagrams !== 'undefined') {
-      Diagrams.hydrateContainer(targetEl || document.getElementById('app-view'));
+    const scopeEl = targetEl || document.getElementById('app-view');
+    if (typeof Diagrams !== 'undefined' && scopeEl) {
+      Diagrams.hydrateContainer(scopeEl);
     }
-    if (window.MathJax && MathJax.typesetPromise) {
-      const nodes = targetEl ? [targetEl] : undefined;
-      MathJax.typesetPromise(nodes).catch((err) => console.log('MathJax error: ' + err.message));
+    if (!scopeEl) return;
+
+    if (window.MathJax && MathJax.typesetPromise && MathJax.startup && MathJax.startup.promise) {
+      const nodes = [scopeEl];
+      window._mathJaxChain = (window._mathJaxChain || MathJax.startup.promise)
+        .then(() => {
+          if (MathJax.typesetClear) MathJax.typesetClear(nodes);
+          return MathJax.typesetPromise(nodes);
+        })
+        .catch((err) => console.warn('MathJax error:', err));
+    } else if (window._pendingMathTargets) {
+      window._pendingMathTargets.add(scopeEl);
     }
   }
 
