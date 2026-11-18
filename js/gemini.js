@@ -5,16 +5,83 @@
 
 const GeminiService = {
   /**
+   * 雙軌授權請求核心：優先使用 Google OAuth Access Token，失敗或未授權時無縫切換本機 Session API Key
+   */
+  async _fetchWithAuth(baseUrl, fetchOptions = {}, timeoutMs = 120000, overrideKey = '') {
+    const oauthToken = overrideKey ? '' : (typeof getGoogleOAuthToken === 'function' ? getGoogleOAuthToken() : '');
+    let apiKey = (overrideKey || DB.getGeminiKey() || '').trim();
+
+    if (!oauthToken && !apiKey && typeof DB.trySilentBrowserAutofill === 'function') {
+      await DB.trySilentBrowserAutofill(false);
+      apiKey = (DB.getGeminiKey() || '').trim();
+    }
+
+    if (!oauthToken && !apiKey) {
+      throw new Error('尚未授權 Gemini AI，請先登入 Google 帳號授權或於「系統設定」帶入 API Key。');
+    }
+
+    const doFetch = async (url, extraHeaders = {}) => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const mergedHeaders = { ...(fetchOptions.headers || {}), ...extraHeaders };
+        const res = await fetch(url, {
+          ...fetchOptions,
+          headers: Object.keys(mergedHeaders).length > 0 ? mergedHeaders : undefined,
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        return res;
+      } catch (err) {
+        clearTimeout(timeoutId);
+        if (err.name === 'AbortError') {
+          throw new Error(`Gemini API 請求逾時（超過 ${Math.round(timeoutMs / 1000)} 秒），建議減少單次出題數或切換至 Flash 模型後重試。`);
+        }
+        throw err;
+      }
+    };
+
+    if (oauthToken) {
+      try {
+        const res = await doFetch(baseUrl, { Authorization: `Bearer ${oauthToken}` });
+        if (res.ok || (res.status !== 401 && res.status !== 403)) {
+          return res;
+        }
+        if (res.status === 401 && typeof clearGoogleOAuthToken === 'function') {
+          clearGoogleOAuthToken();
+        }
+        if (!apiKey) {
+          const errBody = await res.text().catch(() => '');
+          throw new Error(`Google OAuth 授權無效或尚未於專案啟用 Generative Language API (HTTP ${res.status})。請重新授權或由 Google 密碼管理員帶入 API Key。${errBody ? '' : ''}`);
+        }
+      } catch (oauthErr) {
+        if (!apiKey) {
+          throw oauthErr.message && oauthErr.message.includes('OAuth')
+            ? oauthErr
+            : new Error(`Google OAuth 連線受阻 (${oauthErr.message || oauthErr})，建議於「系統設定」改由 Google 密碼管理員帶入 API Key`);
+        }
+      }
+    }
+
+    const sep = baseUrl.includes('?') ? '&' : '?';
+    return await doFetch(`${baseUrl}${sep}key=${encodeURIComponent(apiKey)}`);
+  },
+
+  getAuthStatus() {
+    const hasOAuth = typeof getGoogleOAuthToken === 'function' && Boolean(getGoogleOAuthToken());
+    const hasSessionKey = Boolean(DB.getGeminiKey());
+    if (hasOAuth && hasSessionKey) return { ready: true, mode: 'both', label: 'Google OAuth + Session Key' };
+    if (hasOAuth) return { ready: true, mode: 'oauth', label: 'Google OAuth 免金鑰直連' };
+    if (hasSessionKey) return { ready: true, mode: 'key', label: '本機 Session API Key' };
+    return { ready: false, mode: 'none', label: '尚未授權' };
+  },
+
+  /**
    * 呼叫 Gemini REST API 的共用核心函數
    */
   async callGeminiAPI(prompt, systemInstruction, timeoutMs = 120000, extraParts = []) {
-    const apiKey = await DB.getConfig('geminiApiKey');
-    if (!apiKey || apiKey.trim() === '') {
-      throw new Error('未設定 Gemini API Key，請先前往「系統設定」頁面填寫 API 金鑰。');
-    }
-
     const model = (await DB.getConfig('geminiModel')) || 'gemini-2.5-flash';
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    const baseUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
     const parts = Array.isArray(extraParts) && extraParts.length > 0
       ? [...extraParts, { text: prompt }]
@@ -34,25 +101,23 @@ const GeminiService = {
       };
     }
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
     let response;
     try {
-      response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-        signal: controller.signal
-      });
+      response = await this._fetchWithAuth(
+        baseUrl,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        },
+        timeoutMs
+      );
     } catch (fetchErr) {
-      clearTimeout(timeoutId);
-      if (fetchErr.name === 'AbortError') {
-        throw new Error(`Gemini API 請求逾時（超過 ${Math.round(timeoutMs / 1000)} 秒），建議減少單次出題數或切換至 Flash 模型後重試。`);
+      if (fetchErr.message && (fetchErr.message.includes('逾時') || fetchErr.message.includes('授權'))) {
+        throw fetchErr;
       }
       throw new Error('無法連線至 Gemini API: ' + fetchErr.message);
     }
-    clearTimeout(timeoutId);
 
     const responseText = await response.text();
 
@@ -468,19 +533,18 @@ ${userQuestion}
    * 即時自 Google API 動態取得最新且最適合醫學物理考照的前 5 款 Gemini 模型
    */
   async fetchTopModels(apiKey) {
-    if (!apiKey) {
-      apiKey = await DB.getConfig('geminiApiKey');
-    }
-
     const fallbackModels = this.getDefaultTopModels();
-    if (!apiKey || apiKey.trim() === '') return fallbackModels;
+    const oauthToken = typeof getGoogleOAuthToken === 'function' ? getGoogleOAuthToken() : '';
+    const effectiveKey = (apiKey || DB.getGeminiKey() || '').trim();
+    if (!effectiveKey && !oauthToken) return fallbackModels;
 
     try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey.trim()}`;
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
-      const res = await fetch(url, { signal: controller.signal });
-      clearTimeout(timeoutId);
+      const res = await this._fetchWithAuth(
+        'https://generativelanguage.googleapis.com/v1beta/models',
+        { method: 'GET' },
+        10000,
+        effectiveKey
+      );
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();

@@ -23,12 +23,51 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Inject Firebase Config from GitHub Secrets
+        env:
+          FIREBASE_CONFIG_RAW: ${{ secrets.FIREBASE_CONFIG }}
+        run: |
+          node << 'EOF'
+          const fs = require('fs');
+          const raw = (process.env.FIREBASE_CONFIG_RAW || '').trim();
+          if (!raw) {
+            console.log('FIREBASE_CONFIG secret is not set; skipping injection.');
+            process.exit(0);
+          }
+          const keys = ['apiKey', 'authDomain', 'projectId', 'storageBucket', 'messagingSenderId', 'appId'];
+          const cfg = {};
+          for (const k of keys) {
+            const re = new RegExp(`["']?${k}["']?\\s*:\\s*["']([^"']+)["']`);
+            const m = raw.match(re);
+            if (m && m[1]) cfg[k] = m[1].trim();
+          }
+          if (!cfg.projectId || !cfg.apiKey) {
+            console.error('Invalid FIREBASE_CONFIG secret: missing projectId or apiKey.');
+            process.exit(1);
+          }
+          cfg.authDomain = cfg.authDomain || `${cfg.projectId}.firebaseapp.com`;
+          cfg.storageBucket = cfg.storageBucket || `${cfg.projectId}.appspot.com`;
+          const target = 'js/firebase-config.js';
+          let src = fs.readFileSync(target, 'utf8');
+          const pattern = /const DEFAULT_FIREBASE_CONFIG = \{[\s\S]*?\};/;
+          if (!pattern.test(src)) {
+            console.error('Could not find DEFAULT_FIREBASE_CONFIG placeholder in js/firebase-config.js');
+            process.exit(1);
+          }
+          src = src.replace(pattern, `const DEFAULT_FIREBASE_CONFIG = ${JSON.stringify(cfg, null, 2)};`);
+          fs.writeFileSync(target, src, 'utf8');
+          console.log('Injected Firebase config for project:', cfg.projectId);
+          EOF
+
       - name: Setup Pages
         uses: actions/configure-pages@v4
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: '.'
+
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4

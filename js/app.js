@@ -6,6 +6,86 @@ let lastDashboardData = null;
 let lastExamRadarRates = null;
 
 /**
+ * 同步側邊欄、行動頂部列與橫幅的 Google 帳號登入狀態
+ */
+function syncAuthUI() {
+  const user = typeof getCurrentUser === 'function' ? getCurrentUser() : null;
+  const activeFb = typeof getActiveFirebaseConfig === 'function' ? getActiveFirebaseConfig() : {};
+  const hasFbConfig = Boolean(activeFb && activeFb.projectId && activeFb.apiKey);
+
+  const avatarEl = document.getElementById('sidebar-auth-avatar');
+  const nameEl = document.getElementById('sidebar-auth-name');
+  const subEl = document.getElementById('sidebar-auth-sub');
+  const btnSidebar = document.getElementById('btn-sidebar-auth');
+  const btnMobile = document.getElementById('btn-auth-mobile');
+  const iconMobile = document.getElementById('auth-icon-mobile');
+  const labelMobile = document.getElementById('auth-label-mobile');
+  const banner = document.getElementById('auth-status-banner');
+  const btnBanner = document.getElementById('btn-banner-signin');
+
+  if (user) {
+    if (avatarEl) {
+      if (user.photoURL) {
+        avatarEl.innerHTML = `<img src="${user.photoURL}" alt="" style="width:100%;height:100%;border-radius:5px;object-fit:cover;">`;
+      } else {
+        avatarEl.textContent = (user.displayName || user.email || 'U').charAt(0).toUpperCase();
+      }
+    }
+    if (nameEl) nameEl.innerText = user.displayName || 'Google 使用者';
+    if (subEl) subEl.innerText = user.email || user.uid;
+    if (btnSidebar) {
+      btnSidebar.className = 'btn btn-secondary btn-sm';
+      btnSidebar.innerHTML = '<span class="material-icons-round">logout</span><span>登出帳號</span>';
+      btnSidebar.onclick = handleGoogleSignOut;
+    }
+    if (btnMobile) btnMobile.onclick = handleGoogleSignOut;
+    if (iconMobile) iconMobile.innerText = 'account_circle';
+    if (labelMobile) labelMobile.innerText = '已登入';
+    if (banner) banner.style.display = 'none';
+  } else {
+    if (avatarEl) avatarEl.textContent = 'G';
+    if (nameEl) nameEl.innerText = '未登入 Google 帳號';
+    if (subEl) subEl.innerText = hasFbConfig ? '點擊登入同步雲端' : '純本機離線模式';
+    if (btnSidebar) {
+      btnSidebar.className = 'btn btn-primary btn-sm';
+      btnSidebar.innerHTML = '<span class="material-icons-round">login</span><span>Google 帳號登入</span>';
+      btnSidebar.onclick = handleGoogleSignIn;
+    }
+    if (btnMobile) btnMobile.onclick = handleGoogleSignIn;
+    if (iconMobile) iconMobile.innerText = 'login';
+    if (labelMobile) labelMobile.innerText = '登入';
+    if (banner) banner.style.display = hasFbConfig ? 'flex' : 'none';
+    if (btnBanner) btnBanner.onclick = handleGoogleSignIn;
+  }
+}
+
+async function handleGoogleSignIn() {
+  try {
+    showToast('正在啟動 Google 帳號登入', 'info');
+    const res = await signInWithGoogle({ requestGeminiScope: false });
+    if (res && !res.redirecting) {
+      await DB.init();
+      syncAuthUI();
+      router();
+    }
+  } catch (err) {
+    showToast('登入失敗：' + (err.message || err), 'error');
+  }
+}
+
+async function handleGoogleSignOut() {
+  if (!confirm('確定要登出 Google 帳號並清除本機 Session 暫存憑證嗎？')) return;
+  try {
+    await signOutGoogle();
+    syncAuthUI();
+    router();
+    showToast('已登出帳號並清空暫存憑證', 'info');
+  } catch (err) {
+    showToast('登出失敗：' + err.message, 'error');
+  }
+}
+
+/**
  * 主題切換時即時重繪畫面上的 Canvas 圖表
  */
 function redrawActiveCharts() {
@@ -613,6 +693,9 @@ function openDiagramModal(unitId, unitName) {
     bodyEl.appendChild(block);
   });
 
+  if (typeof Diagrams !== 'undefined') {
+    Diagrams.hydrateContainer(bodyEl);
+  }
   if (dialog.showModal) dialog.showModal();
 }
 
@@ -1462,7 +1545,10 @@ async function loadReviewPage() {
   const flipper = document.getElementById('review-card-flipper');
   const ratingActions = document.getElementById('review-rating-actions');
   if (flipper) {
-    flipper.onclick = () => {
+    flipper.onclick = (e) => {
+      if (e && e.target && e.target.closest('.mp-lab, .mp-lab-controls, .mp-lab-stage, input, button')) {
+        return;
+      }
       flipper.classList.toggle('flipped');
       if (ratingActions) {
         ratingActions.style.display = flipper.classList.contains('flipped') ? 'flex' : 'none';
@@ -1850,20 +1936,67 @@ async function loadJournalList() {
 }
 
 // ==========================================
-// 8. 系統設定與 Firebase 資料庫搬移 (Settings)
+// 8. 系統設定與 Google 帳號授權 (Settings)
 // ==========================================
 async function loadSettingsPage() {
   const examDateInput = document.getElementById('input-exam-date');
   const startDateInput = document.getElementById('input-start-date');
   const dailyGoalInput = document.getElementById('input-daily-goal');
   const notebookUrlInput = document.getElementById('input-notebook-url');
+
+  const credForm = document.getElementById('form-gemini-credential');
+  const credUsernameInput = document.getElementById('input-cred-username');
   const apiKeyInput = document.getElementById('input-api-key');
   const modelSelect = document.getElementById('select-model');
+  const geminiAuthBadge = document.getElementById('gemini-auth-badge');
+  const settingsAuthEmail = document.getElementById('settings-auth-email');
+  const settingsAuthUid = document.getElementById('settings-auth-uid');
+  const btnSettingsGoogleAuth = document.getElementById('btn-settings-google-auth');
+  const btnOAuthGemini = document.getElementById('btn-oauth-gemini');
+  const btnAutofillKey = document.getElementById('btn-autofill-key');
 
   const fbPasteInput = document.getElementById('input-fb-paste');
   const fbApiKeyInput = document.getElementById('input-fb-api-key');
   const fbProjectIdInput = document.getElementById('input-fb-project-id');
   const fbStatusSpan = document.getElementById('fb-connection-status');
+  const fbOriginTitle = document.getElementById('fb-config-origin-title');
+  const fbOriginDesc = document.getElementById('fb-config-origin-desc');
+  const rulesTextarea = document.getElementById('textarea-firestore-rules');
+
+  function syncSettingsAuthSection() {
+    const user = typeof getCurrentUser === 'function' ? getCurrentUser() : null;
+    const authStatus = GeminiService.getAuthStatus();
+
+    if (geminiAuthBadge) {
+      geminiAuthBadge.innerText = authStatus.label;
+      geminiAuthBadge.className = authStatus.ready ? 'badge badge-completed' : 'badge badge-todo';
+    }
+
+    if (user) {
+      if (settingsAuthEmail) settingsAuthEmail.innerText = user.email || user.displayName || '已登入';
+      if (settingsAuthUid) settingsAuthUid.innerText = `UID: ${user.uid}`;
+      if (credUsernameInput) credUsernameInput.value = user.email || '';
+      if (btnSettingsGoogleAuth) {
+        btnSettingsGoogleAuth.className = 'btn btn-secondary btn-sm';
+        btnSettingsGoogleAuth.innerHTML = '<span class="material-icons-round">logout</span><span>登出</span>';
+        btnSettingsGoogleAuth.onclick = handleGoogleSignOut;
+      }
+    } else {
+      if (settingsAuthEmail) settingsAuthEmail.innerText = '尚未登入 Google 帳號';
+      if (settingsAuthUid) settingsAuthUid.innerText = '登入後自動隔離個人雲端資料並綁定密碼管理員帳號';
+      if (credUsernameInput) credUsernameInput.value = '';
+      if (btnSettingsGoogleAuth) {
+        btnSettingsGoogleAuth.className = 'btn btn-primary btn-sm';
+        btnSettingsGoogleAuth.innerHTML = '<span class="material-icons-round">login</span><span>Google 登入</span>';
+        btnSettingsGoogleAuth.onclick = handleGoogleSignIn;
+      }
+    }
+
+    if (rulesTextarea) {
+      const uidRule = user ? `request.auth.uid == '${user.uid}'` : 'request.auth.uid == userId';
+      rulesTextarea.value = `rules_version = '2';\nservice cloud.firestore {\n  match /databases/{database}/documents {\n    match /users/{userId}/{col}/{docId} {\n      allow read, delete: if request.auth != null && ${uidRule};\n      allow create, update: if request.auth != null && ${uidRule}\n        && !(col == 'config' && docId == 'settings' && ('geminiApiKey' in request.resource.data));\n    }\n  }\n}`;
+    }
+  }
 
   async function updateModelOptions(currentKey, preferredModel, notify = false) {
     const hintEl = document.getElementById('model-status-hint');
@@ -1893,11 +2026,11 @@ async function loadSettingsPage() {
         modelSelect.add(customOpt, 0);
       }
 
+      const authStatus = GeminiService.getAuthStatus();
       if (hintEl) {
-        hintEl.innerText =
-          currentKey && currentKey.trim()
-            ? '已依據 Google API 即時更新前 5 款適用模型'
-            : '已載入預設模型清單；填入 API Key 後可點選即時同步';
+        hintEl.innerText = (currentKey && currentKey.trim()) || authStatus.ready
+          ? '已依據 Google API 即時更新前 5 款適用模型'
+          : '已載入預設模型清單；授權 OAuth 或帶入 API Key 後可即時同步';
       }
       if (notify) showToast('已同步最新模型清單', 'success');
     } catch (err) {
@@ -1908,11 +2041,32 @@ async function loadSettingsPage() {
   }
 
   async function refreshFirebaseStatusAndStats() {
+    const activeFb = getActiveFirebaseConfig();
+    const hasCustom = Boolean(localStorage.getItem('mp_custom_firebase_config'));
+    const injected = typeof isInjectedFirebaseConfig === 'function' && isInjectedFirebaseConfig();
+
+    if (fbOriginTitle && fbOriginDesc) {
+      if (hasCustom) {
+        fbOriginTitle.innerText = `目前採用本機自訂覆蓋專案 (${activeFb.projectId})`;
+        fbOriginDesc.innerText = '若已設定 GitHub Secrets 自動注入，可於下方展開進階選單恢復預設注入。';
+      } else if (injected) {
+        fbOriginTitle.innerText = `已由系統部署自動注入專案 (${activeFb.projectId})`;
+        fbOriginDesc.innerText = '任何新裝置開啟網站均無須重填 Firebase Key，直接登入 Google 帳號即可同步。';
+      } else {
+        fbOriginTitle.innerText = '尚未注入 Firebase 專案配置';
+        fbOriginDesc.innerText = '請依 README 設定 GitHub Secret (FIREBASE_CONFIG)，或於下方展開進階選單貼入配置。';
+      }
+    }
+
     const probe = await verifyFirebaseConnection();
     if (fbStatusSpan) {
       if (probe.connected) {
         fbStatusSpan.innerText = probe.mode === 'offline-cache' ? '離線快取中' : `已連線 (${probe.projectId})`;
         fbStatusSpan.className = 'badge badge-completed';
+      } else if (probe.mode === 'auth-required') {
+        fbStatusSpan.innerText = '等待 Google 登入';
+        fbStatusSpan.className = 'badge badge-review';
+        fbStatusSpan.title = probe.reason || '';
       } else if (probe.mode === 'error') {
         fbStatusSpan.innerText = '連線失敗';
         fbStatusSpan.className = 'badge badge-review';
@@ -1950,14 +2104,15 @@ async function loadSettingsPage() {
   }
 
   try {
+    syncSettingsAuthSection();
     examDateInput.value = (await DB.getConfig('examDate')) || '2027-10-01';
     startDateInput.value = (await DB.getConfig('startDate')) || new Date().toISOString().split('T')[0];
     dailyGoalInput.value = (await DB.getConfig('dailyGoalMinutes')) || '45';
     notebookUrlInput.value = (await DB.getConfig('notebookLmUrl')) || '';
 
-    const savedApiKey = (await DB.getConfig('geminiApiKey')) || '';
+    const savedApiKey = DB.getGeminiKey();
     const savedModel = (await DB.getConfig('geminiModel')) || 'gemini-2.5-flash';
-    apiKeyInput.value = savedApiKey;
+    if (apiKeyInput) apiKeyInput.value = savedApiKey;
 
     await updateModelOptions(savedApiKey, savedModel, false);
 
@@ -1966,9 +2121,11 @@ async function loadSettingsPage() {
       btnRefresh.onclick = async () => updateModelOptions(apiKeyInput.value.trim(), modelSelect.value, true);
     }
 
-    apiKeyInput.addEventListener('change', () => {
-      if (apiKeyInput.value.trim()) updateModelOptions(apiKeyInput.value.trim(), modelSelect.value, false);
-    });
+    if (apiKeyInput) {
+      apiKeyInput.addEventListener('change', () => {
+        if (apiKeyInput.value.trim()) updateModelOptions(apiKeyInput.value.trim(), modelSelect.value, false);
+      });
+    }
 
     const activeFb = getActiveFirebaseConfig();
     if (fbApiKeyInput) fbApiKeyInput.value = activeFb.apiKey || '';
@@ -1978,7 +2135,41 @@ async function loadSettingsPage() {
     showToast('讀取設定檔失敗', 'error');
   }
 
-  // 智慧解析整段 firebaseConfig 貼上
+  if (btnOAuthGemini) {
+    btnOAuthGemini.onclick = async () => {
+      btnOAuthGemini.disabled = true;
+      try {
+        showToast('正在向 Google 申請 Gemini OAuth 直連授權', 'info');
+        const res = await authorizeGeminiOAuth();
+        if (res && !res.redirecting) {
+          syncAuthUI();
+          syncSettingsAuthSection();
+          await updateModelOptions(apiKeyInput.value.trim(), modelSelect.value, false);
+          showToast('已取得 Google OAuth 免金鑰直連授權', 'success');
+        }
+      } catch (err) {
+        showToast('OAuth 授權未完成：' + (err.message || err), 'warning');
+      } finally {
+        btnOAuthGemini.disabled = false;
+      }
+    };
+  }
+
+  if (btnAutofillKey) {
+    btnAutofillKey.onclick = async () => {
+      const ok = await DB.trySilentBrowserAutofill(true);
+      if (ok) {
+        apiKeyInput.value = DB.getGeminiKey();
+        syncSettingsAuthSection();
+        await updateModelOptions(apiKeyInput.value.trim(), modelSelect.value, false);
+        showToast('已從 Google 密碼管理員自動帶入 API Key 至本機 Session', 'success');
+      } else {
+        apiKeyInput.focus();
+        showToast('尚未偵測到已存密碼憑證，請輸入 API Key 後點擊下方儲存以綁定瀏覽器密碼管理員', 'info');
+      }
+    };
+  }
+
   if (fbPasteInput) {
     fbPasteInput.addEventListener('input', () => {
       const parsed = parseFirebaseConfigInput(fbPasteInput.value);
@@ -1988,6 +2179,20 @@ async function loadSettingsPage() {
         showToast(`已自動擷取專案 ${parsed.projectId} 配置`, 'success');
       }
     });
+  }
+
+  const btnCopyRules = document.getElementById('btn-copy-rules');
+  if (btnCopyRules && rulesTextarea) {
+    btnCopyRules.onclick = () => {
+      navigator.clipboard
+        .writeText(rulesTextarea.value)
+        .then(() => showToast('個人 Firestore 安全規則已複製', 'success'))
+        .catch(() => {
+          rulesTextarea.select();
+          document.execCommand('copy');
+          showToast('安全規則已複製', 'success');
+        });
+    };
   }
 
   document.getElementById('btn-save-params').onclick = async () => {
@@ -2006,21 +2211,36 @@ async function loadSettingsPage() {
     }
   };
 
-  document.getElementById('btn-save-ai').onclick = async () => {
-    const btn = document.getElementById('btn-save-ai');
-    btn.disabled = true;
-    try {
-      await DB.saveConfig('geminiApiKey', apiKeyInput.value.trim());
-      await DB.saveConfig('geminiModel', modelSelect.value);
-      showToast('Gemini AI 設定已儲存', 'success');
-    } catch (e) {
-      showToast('儲存失敗：' + e.message, 'error');
-    } finally {
-      btn.disabled = false;
-    }
-  };
+  if (credForm) {
+    credForm.onsubmit = async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById('btn-save-ai');
+      if (btn) btn.disabled = true;
+      try {
+        const key = apiKeyInput.value.trim();
+        DB.saveGeminiKey(key);
+        await DB.saveConfig('geminiModel', modelSelect.value);
+        const user = typeof getCurrentUser === 'function' ? getCurrentUser() : null;
+        let storedInPwdMgr = false;
+        if (key && user && user.email) {
+          storedInPwdMgr = await DB.saveCredentialToBrowser(user.email, key);
+        }
+        syncSettingsAuthSection();
+        showToast(
+          storedInPwdMgr
+            ? '已套用至本機 Session 並綁定 Google 密碼管理員（絕不寫入資料庫）'
+            : '已套用至本機 Session 與模型設定（絕不寫入資料庫）',
+          'success'
+        );
+      } catch (err) {
+        showToast('儲存失敗：' + err.message, 'error');
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    };
+  }
 
-  // 儲存並驗證 Firebase 連線
+  // 儲存並驗證自訂覆蓋 Firebase 連線
   const btnSaveFb = document.getElementById('btn-save-fb');
   if (btnSaveFb) {
     btnSaveFb.onclick = async () => {
@@ -2041,7 +2261,7 @@ async function loadSettingsPage() {
       };
 
       saveCustomFirebaseConfig(fbConfig);
-      showToast('正在驗證 Firebase 連線與初始化', 'info');
+      showToast('正在套用自訂配置並重新載入', 'info');
       setTimeout(() => location.reload(), 600);
     };
   }
@@ -2049,7 +2269,7 @@ async function loadSettingsPage() {
   const btnClearFb = document.getElementById('btn-clear-fb');
   if (btnClearFb) {
     btnClearFb.onclick = () => {
-      if (!confirm('確定要清除 Firebase 設定並切換回純本機模式嗎？')) return;
+      if (!confirm('確定要清除本機自訂覆蓋並恢復預設配置嗎？')) return;
       saveCustomFirebaseConfig(null);
       location.reload();
     };

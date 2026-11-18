@@ -61,10 +61,11 @@
 
   <!-- Firebase Compat Web SDK (v10.8.0) -->
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
 
   <!-- 全局樣式表 -->
-  <link rel="stylesheet" href="css/style.css?v=3.2">
+  <link rel="stylesheet" href="css/style.css?v=3.5">
 </head>
 <body>
 
@@ -79,9 +80,15 @@
       <div class="mobile-brand-text">醫學物理師備考工作台</div>
     </div>
   </div>
-  <button id="btn-theme-toggle-mobile" class="btn btn-secondary btn-sm" onclick="toggleTheme()" title="切換深色/淺色紙本閱讀模式">
-    <span class="material-icons-round" id="theme-icon-mobile">light_mode</span>
-  </button>
+  <div style="display: flex; align-items: center; gap: 6px;">
+    <button id="btn-auth-mobile" class="btn btn-secondary btn-sm" title="Google 帳號登入/狀態">
+      <span class="material-icons-round" id="auth-icon-mobile">login</span>
+      <span id="auth-label-mobile">登入</span>
+    </button>
+    <button id="btn-theme-toggle-mobile" class="btn btn-secondary btn-sm" onclick="toggleTheme()" title="切換深色/淺色紙本閱讀模式">
+      <span class="material-icons-round" id="theme-icon-mobile">light_mode</span>
+    </button>
+  </div>
 </header>
 
 <div class="sidebar-overlay" id="sidebar-overlay"></div>
@@ -149,16 +156,40 @@
     </ul>
 
     <div class="sidebar-footer">
+      <div class="auth-sidebar-card" id="sidebar-auth-card">
+        <div class="auth-user-row">
+          <div class="auth-avatar" id="sidebar-auth-avatar">G</div>
+          <div class="auth-user-meta">
+            <div class="auth-user-name" id="sidebar-auth-name">未登入 Google 帳號</div>
+            <div class="auth-user-sub" id="sidebar-auth-sub">目前使用本機模式</div>
+          </div>
+        </div>
+        <button id="btn-sidebar-auth" class="btn btn-primary btn-sm" style="width: 100%;">
+          <span class="material-icons-round">login</span>
+          <span>Google 帳號登入</span>
+        </button>
+      </div>
+
       <button id="btn-theme-toggle" class="btn btn-secondary" onclick="toggleTheme()" style="width: 100%; justify-content: flex-start;">
         <span class="material-icons-round" id="theme-icon-desktop">light_mode</span>
         <span id="theme-label-desktop">淺色紙本模式</span>
       </button>
-      <div class="sidebar-meta">ROC Medical Physicist v3.0</div>
+      <div class="sidebar-meta">ROC Medical Physicist v3.5</div>
     </div>
   </aside>
 
   <!-- 主要內容區域 -->
   <main class="main-content">
+    <div id="auth-status-banner" class="auth-banner" style="display: none;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span class="material-icons-round" style="color: var(--warning); font-size: 18px;">account_circle</span>
+        <span>雲端專案已就緒，登入您的 Google 帳號即可跨裝置同步學習進度、題庫與帶入 Gemini 授權。</span>
+      </div>
+      <button id="btn-banner-signin" class="btn btn-primary btn-sm">
+        <span class="material-icons-round">login</span>
+        <span>使用 Google 帳號登入</span>
+      </button>
+    </div>
     <div id="app-view">
       <div class="loader-container">
         <div class="spinner"></div>
@@ -1043,12 +1074,12 @@
   </div>
 </template>
 
-<!-- 8. 系統設定與 Firebase 遷移 Template -->
+<!-- 8. 系統設定與 Google 帳號授權 Template -->
 <template id="template-settings">
   <div class="page-header">
     <div class="page-title">
-      <h2>系統設定與 Firebase 資料庫遷移</h2>
-      <p>管理備考參數、Gemini API 金鑰、Firebase 雲端連線與舊資料一鍵搬移</p>
+      <h2>系統設定與雲端帳號授權</h2>
+      <p>以 Google 帳號綁定個人雲端空間與 Gemini 授權，API Key 絕不寫入資料庫或程式碼</p>
     </div>
   </div>
 
@@ -1085,77 +1116,89 @@
       </button>
     </div>
 
-    <!-- Gemini AI 設定 -->
+    <!-- Google 帳號與 Gemini AI 雙軌授權 -->
     <div class="surface-card">
       <div class="card-header">
-        <h3 class="card-title">Gemini AI 連線設定</h3>
+        <h3 class="card-title">Google 帳號與 Gemini 授權</h3>
+        <span id="gemini-auth-badge" class="badge badge-todo">未授權</span>
       </div>
 
-      <div class="form-group">
-        <label class="form-label" for="input-api-key">Gemini API Key</label>
-        <input type="password" id="input-api-key" class="form-control" placeholder="AIzaSy...">
-        <p style="font-size: 12px; color: var(--text-dark); margin-top: 6px;">
-          金鑰僅儲存於您的瀏覽器本機與授權雲端資料庫，不會寫入 GitHub 程式碼。
-        </p>
-      </div>
-
-      <div class="form-group">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-          <label class="form-label" for="select-model" style="margin-bottom: 0;">AI 模型 (動態優選前 5 款)</label>
-          <button type="button" id="btn-refresh-models" class="btn btn-secondary btn-sm">
-            <span class="material-icons-round">sync</span>
-            <span>即時同步</span>
+      <div class="sub-card" style="margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap;">
+        <div style="min-width: 0;">
+          <div style="font-size: 13px; font-weight: 600;" id="settings-auth-email">尚未登入 Google 帳號</div>
+          <div style="font-size: 11.5px; color: var(--text-dark);" id="settings-auth-uid">登入後自動隔離個人雲端資料並支援帳號憑證連動</div>
+        </div>
+        <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+          <button type="button" id="btn-settings-google-auth" class="btn btn-primary btn-sm">
+            <span class="material-icons-round">login</span>
+            <span>Google 登入</span>
+          </button>
+          <button type="button" id="btn-oauth-gemini" class="btn btn-secondary btn-sm" title="透過 Google OAuth 免金鑰直連 Gemini API">
+            <span class="material-icons-round">verified_user</span>
+            <span>OAuth 直連授權</span>
           </button>
         </div>
-        <select id="select-model"></select>
-        <p id="model-status-hint" style="font-size: 12px; color: var(--text-dark); margin-top: 6px;">
-          系統已載入預設模型清單
-        </p>
       </div>
 
-      <button id="btn-save-ai" class="btn btn-primary" style="width: 100%;">
-        <span class="material-icons-round">save</span>
-        <span>儲存 AI 連線設定</span>
-      </button>
+      <form id="form-gemini-credential" autocomplete="on">
+        <div class="form-group" style="margin-bottom: 10px;">
+          <label class="form-label" for="input-cred-username">綁定 Google 帳號（供瀏覽器密碼管理員識別）</label>
+          <input type="email" id="input-cred-username" name="username" autocomplete="username" class="form-control mono-num" readonly placeholder="登入 Google 帳號後自動帶入 Email">
+        </div>
+
+        <div class="form-group">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; gap: 8px; flex-wrap: wrap;">
+            <label class="form-label" for="input-api-key" style="margin-bottom: 0;">Gemini API Key（僅存本機 Session）</label>
+            <button type="button" id="btn-autofill-key" class="btn btn-secondary btn-sm">
+              <span class="material-icons-round">key</span>
+              <span>從 Google 密碼管理員帶入</span>
+            </button>
+          </div>
+          <input type="password" id="input-api-key" name="password" autocomplete="current-password" class="form-control mono-num" placeholder="AIzaSy... (絕不寫入資料庫或程式碼)">
+          <p style="font-size: 11.5px; color: var(--text-dark); margin-top: 6px;">
+            雙軌支援：(1) 使用上方 Google OAuth 免金鑰直連；或 (2) 輸入 API Key 儲存於本機 Session 並交由 Google 密碼管理員跨裝置自動帶入，資料庫與程式碼均保持零金鑰。
+          </p>
+        </div>
+
+        <div class="form-group">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <label class="form-label" for="select-model" style="margin-bottom: 0;">AI 模型 (動態優選前 5 款)</label>
+            <button type="button" id="btn-refresh-models" class="btn btn-secondary btn-sm">
+              <span class="material-icons-round">sync</span>
+              <span>即時同步</span>
+            </button>
+          </div>
+          <select id="select-model"></select>
+          <p id="model-status-hint" style="font-size: 12px; color: var(--text-dark); margin-top: 6px;">
+            系統已載入預設模型清單
+          </p>
+        </div>
+
+        <button type="submit" id="btn-save-ai" class="btn btn-primary" style="width: 100%;">
+          <span class="material-icons-round">save</span>
+          <span>套用至本機 Session 並儲存至瀏覽器密碼管理員</span>
+        </button>
+      </form>
     </div>
   </div>
 
-  <!-- Firebase 連線與資料庫搬移 -->
+  <!-- Firebase 個人雲端同步與安全規則 -->
   <div class="grid-cols-2" style="margin-top: 16px;">
     <div class="surface-card">
       <div class="card-header">
-        <h3 class="card-title">Firebase Cloud Firestore 連線</h3>
+        <h3 class="card-title">Firebase Cloud Firestore 個人空間</h3>
         <span id="fb-connection-status" class="badge badge-todo">檢測中</span>
       </div>
 
-      <div class="form-group">
-        <label class="form-label" for="input-fb-paste">快速貼上整段 firebaseConfig（選填，貼上後自動拆解）</label>
-        <textarea id="input-fb-paste" rows="3" class="form-control mono-num" placeholder='貼上從 Firebase Console 複製的 const firebaseConfig = { apiKey: "...", projectId: "..." };'></textarea>
-      </div>
-
-      <div class="grid-cols-2">
-        <div class="form-group">
-          <label class="form-label" for="input-fb-project-id">Firebase Project ID</label>
-          <input type="text" id="input-fb-project-id" class="form-control mono-num" placeholder="medical-physicist-study">
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="input-fb-api-key">Firebase Web API Key</label>
-          <input type="password" id="input-fb-api-key" class="form-control mono-num" placeholder="AIzaSy...">
+      <div class="sub-card" style="margin-bottom: 12px;">
+        <div style="font-size: 12.5px; font-weight: 600; color: var(--text-main);" id="fb-config-origin-title">連線配置來源檢測中</div>
+        <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;" id="fb-config-origin-desc">
+          跨裝置開啟網站免手動重填專案設定，僅需點擊登入您的 Google 帳號。
         </div>
       </div>
 
-      <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-        <button id="btn-save-fb" class="btn btn-primary" style="flex: 1;">
-          <span class="material-icons-round">cloud_done</span>
-          <span>儲存並驗證連線</span>
-        </button>
-        <button id="btn-clear-fb" class="btn btn-secondary" title="切換回純本機離線模式">
-          <span>重設連線</span>
-        </button>
-      </div>
-
-      <div id="fb-stats-panel" style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-color);">
-        <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 6px;">本機 vs. Firebase 雲端資料筆數對照</div>
+      <div id="fb-stats-panel" style="margin-bottom: 14px;">
+        <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 6px;">本機快取 vs. 個人雲端 (/users/UID) 資料筆數</div>
         <div class="sync-stats-grid" id="fb-stats-grid"></div>
         <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px;">
           <button id="btn-push-local-fb" class="btn btn-secondary btn-sm" style="flex: 1;">
@@ -1168,19 +1211,63 @@
           </button>
         </div>
       </div>
+
+      <details style="border-top: 1px solid var(--border-color); padding-top: 10px; margin-bottom: 10px;">
+        <summary style="cursor: pointer; font-size: 12.5px; font-weight: 500; color: var(--text-muted);">
+          檢視個人專屬 Firestore 安全規則 (firestore.rules)
+        </summary>
+        <div style="margin-top: 10px;">
+          <textarea id="textarea-firestore-rules" rows="7" class="form-control mono-num" style="font-size: 11.5px;" readonly></textarea>
+          <button type="button" id="btn-copy-rules" class="btn btn-secondary btn-sm" style="margin-top: 8px; width: 100%;">
+            <span class="material-icons-round">content_copy</span>
+            <span>複製個人安全規則</span>
+          </button>
+        </div>
+      </details>
+
+      <details style="border-top: 1px solid var(--border-color); padding-top: 10px;">
+        <summary style="cursor: pointer; font-size: 12.5px; font-weight: 500; color: var(--text-muted);">
+          進階設定：本機開發自訂 / 覆蓋 firebaseConfig
+        </summary>
+        <div style="margin-top: 12px;">
+          <div class="form-group">
+            <label class="form-label" for="input-fb-paste">快速貼上整段 firebaseConfig（選填，貼上後自動拆解）</label>
+            <textarea id="input-fb-paste" rows="3" class="form-control mono-num" placeholder='貼上從 Firebase Console 複製的 const firebaseConfig = { apiKey: "...", projectId: "..." };'></textarea>
+          </div>
+          <div class="grid-cols-2">
+            <div class="form-group">
+              <label class="form-label" for="input-fb-project-id">Firebase Project ID</label>
+              <input type="text" id="input-fb-project-id" class="form-control mono-num" placeholder="project-id">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="input-fb-api-key">Firebase Web API Key</label>
+              <input type="password" id="input-fb-api-key" class="form-control mono-num" placeholder="AIzaSy...">
+            </div>
+          </div>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button id="btn-save-fb" class="btn btn-primary btn-sm" style="flex: 1;">
+              <span class="material-icons-round">cloud_done</span>
+              <span>儲存自訂覆蓋並重載</span>
+            </button>
+            <button id="btn-clear-fb" class="btn btn-secondary btn-sm" title="清除本機自訂覆蓋，恢復使用部署注入設定">
+              <span>恢復預設注入</span>
+            </button>
+          </div>
+        </div>
+      </details>
     </div>
 
     <!-- 舊版 Google Sheet 直連搬移 & JSON 備份 -->
     <div class="surface-card" style="display: flex; flex-direction: column; justify-content: space-between; gap: 16px;">
       <div>
         <div class="card-header">
-          <h3 class="card-title">舊資料搬移至 Firebase (Google Sheet / JSON)</h3>
+          <h3 class="card-title">舊資料搬移至雲端 (Google Sheet / JSON)</h3>
         </div>
 
         <div class="sub-card" style="margin-bottom: 16px;">
           <div style="font-size: 13px; font-weight: 600; margin-bottom: 6px;">從舊版 Google Sheet 試算表直連搬移</div>
           <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px;">
-            暫時將試算表共用權限設為「知道連結的任何人可檢視」，點擊下方按鈕即可免後端直連拉取 8 張工作表並寫入 Firebase（搬完即可改回私人）。
+            暫時將試算表共用權限設為「知道連結的任何人可檢視」，點擊下方按鈕即可免後端直連拉取 8 張工作表並寫入您的個人雲端空間（自動過濾任何 API Key 欄位）。
           </p>
           <div class="form-group" style="margin-bottom: 8px;">
             <label class="form-label" for="input-gsheet-id">Google Sheet ID 或完整網址</label>
@@ -1188,7 +1275,7 @@
           </div>
           <button id="btn-migrate-gsheet" class="btn btn-primary" style="width: 100%;">
             <span class="material-icons-round">move_up</span>
-            <span>一鍵從 Google Sheet 搬移至 Firebase</span>
+            <span>一鍵從 Google Sheet 搬移至雲端</span>
           </button>
         </div>
 
@@ -1434,15 +1521,15 @@
 <!-- ========================================== -->
 <!-- 載入 JavaScript 模組 -->
 <!-- ========================================== -->
-<script src="js/syllabus-data.js?v=3.2"></script>
-<script src="js/firebase-config.js?v=3.2"></script>
-<script src="js/db.js?v=3.2"></script>
-<script src="js/diagrams.js?v=3.2"></script>
-<script src="js/gemini.js?v=3.2"></script>
-<script src="js/charts.js?v=3.2"></script>
-<script src="js/timer.js?v=3.2"></script>
-<script src="js/app.js?v=3.2"></script>
-<script src="js/router.js?v=3.2"></script>
+<script src="js/syllabus-data.js?v=3.5"></script>
+<script src="js/firebase-config.js?v=3.5"></script>
+<script src="js/db.js?v=3.5"></script>
+<script src="js/diagrams.js?v=3.5"></script>
+<script src="js/gemini.js?v=3.5"></script>
+<script src="js/charts.js?v=3.5"></script>
+<script src="js/timer.js?v=3.5"></script>
+<script src="js/app.js?v=3.5"></script>
+<script src="js/router.js?v=3.5"></script>
 
 <script>
   function showToast(message, type = 'info') {

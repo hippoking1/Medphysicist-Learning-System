@@ -1,55 +1,321 @@
 /**
  * 醫學物理師考照自學系統 - 資料存取層 (Data Access Object - db.js)
- * 支援 Firebase Cloud Firestore 與 LocalStorage 雙模切換，以及本機/Google Sheet 一鍵搬移上雲
+ * 支援以 Google Auth UID 隔離之 Cloud Firestore (/users/{uid}/...) 與 LocalStorage 雙模運作
+ * 徹底禁止將 geminiApiKey 寫入 Firestore 或備份檔案
  */
 
 const LEGACY_GSHEET_ID = '1-ATEDk8TtYZRA0gdOFfgzp5ZIYpYWzSRHvcE5eaYcnQ';
+const SESSION_GEMINI_KEY = 'mp_session_gemini_key';
 
 const DB = {
-  /**
-   * 初始化資料庫與自癒種子資料 (Self-Healing)
-   * 若首次連上空白 Firestore 且本機已有學習紀錄，自動無痛將本機資料推送上雲
-   */
-  async init(forceSeeding = false) {
-    const db = initFirebaseApp();
+  _sessionGeminiKey: '',
 
-    if (db && isFirebaseConnected) {
+  _isCloudReady() {
+    return Boolean(
+      typeof dbInstance !== 'undefined' &&
+      dbInstance &&
+      typeof isFirebaseConnected !== 'undefined' &&
+      isFirebaseConnected &&
+      typeof currentUser !== 'undefined' &&
+      currentUser &&
+      currentUser.uid
+    );
+  },
+
+  _col(name) {
+    if (!dbInstance || !currentUser || !currentUser.uid) {
+      throw new Error('尚未登入 Google 帳號或未連線至 Firestore');
+    }
+    return dbInstance.collection('users').doc(currentUser.uid).collection(name);
+  },
+
+  _stripSecrets(cfg) {
+    if (!cfg || typeof cfg !== 'object') return { ...DEFAULT_CONFIGS };
+    const clean = { ...cfg };
+    delete clean.geminiApiKey;
+    return clean;
+  },
+
+  _purgeLocalStoredApiKey() {
+    try {
+      const local = this._getLocal('config');
+      if (local && typeof local === 'object' && 'geminiApiKey' in local) {
+        delete local.geminiApiKey;
+        this._setLocal('config', local);
+      }
+    } catch (e) {}
+  },
+
+  clearLocalUserCache() {
+    const keys = [
+      'config',
+      'syllabus',
+      'progress',
+      'questions',
+      'reviewCards',
+      'examResults',
+      'oralPractices',
+      'studyLogs'
+    ];
+    keys.forEach((k) => {
+      try {
+        localStorage.removeItem(`mp_${k}`);
+      } catch (e) {}
+    });
+    localStorage.removeItem('mp_last_uid');
+    this._sessionGeminiKey = '';
+  },
+
+  // ==========================================
+  // Gemini API Key 本機 Session 與 Google 密碼管理員連動 (不寫入資料庫)
+  // ==========================================
+  getGeminiKey() {
+    if (this._sessionGeminiKey) return this._sessionGeminiKey;
+    try {
+      const val = sessionStorage.getItem(SESSION_GEMINI_KEY) || '';
+      this._sessionGeminiKey = val;
+      return val;
+    } catch (e) {
+      return '';
+    }
+  },
+
+  saveGeminiKey(key) {
+    const cleaned = (key || '').trim();
+    this._sessionGeminiKey = cleaned;
+    try {
+      if (cleaned) {
+        sessionStorage.setItem(SESSION_GEMINI_KEY, cleaned);
+      } else {
+        sessionStorage.removeItem(SESSION_GEMINI_KEY);
+      }
+    } catch (e) {}
+    return cleaned;
+  },
+
+  async saveCredentialToBrowser(email, apiKey) {
+    const key = (apiKey || '').trim();
+    const id = (email || '').trim();
+    if (!id || !key) return false;
+    if (
+      typeof window.PasswordCredential === 'undefined' ||
+      !navigator.credentials ||
+      typeof navigator.credentials.store !== 'function'
+    ) {
+      return false;
+    }
+    try {
+      const cred = new window.PasswordCredential({
+        id,
+        password: key,
+        name: '醫學物理師考照 - Gemini API Key'
+      });
+      await navigator.credentials.store(cred);
+      return true;
+    } catch (e) {
+      console.warn('[Auth] 無法寫入瀏覽器密碼管理員:', e.message || e);
+      return false;
+    }
+  },
+
+  async trySilentBrowserAutofill(interactive = false) {
+    if (this.getGeminiKey()) return true;
+    if (
+      typeof window.PasswordCredential === 'undefined' ||
+      !navigator.credentials ||
+      typeof navigator.credentials.get !== 'function'
+    ) {
+      return false;
+    }
+    try {
+      const cred = await navigator.credentials.get({
+        password: true,
+        mediation: interactive ? 'optional' : 'silent'
+      });
+      if (cred && cred.password) {
+        if (currentUser && currentUser.email && cred.id && cred.id !== currentUser.email) {
+          return false;
+        }
+        this.saveGeminiKey(cred.password);
+        return true;
+      }
+    } catch (e) {}
+    return false;
+  },
+
+  async _purgeCloudApiKeyField() {
+    if (!this._isCloudReady()) return;
+    try {
+      const settingsRef = this._col('config').doc('settings');
+      const doc = await settingsRef.get();
+      if (doc.exists && doc.data() && 'geminiApiKey' in doc.data()) {
+        await settingsRef.update({
+          geminiApiKey: firebase.firestore.FieldValue.delete()
+        });
+      }
+    } catch (e) {}
+  },
+
+  async _migrateLegacyTopLevelToUser() {
+    if (!dbInstance || !currentUser || !currentUser.uid) return false;
+    try {
+      const [cfgDoc, sylSnap, progSnap, qSnap, cardSnap, examSnap, oralSnap, logSnap] =
+        await Promise.all([
+          dbInstance.collection('config').doc('settings').get(),
+          dbInstance.collection('syllabus').get(),
+          dbInstance.collection('progress').get(),
+          dbInstance.collection('questions').get(),
+          dbInstance.collection('reviewCards').get(),
+          dbInstance.collection('examResults').get(),
+          dbInstance.collection('oralPractices').get(),
+          dbInstance.collection('studyLogs').get()
+        ]);
+
+      const readList = (snap) => {
+        const arr = [];
+        snap.forEach((d) => arr.push(d.data()));
+        return arr;
+      };
+
+      const progress = readList(progSnap);
+      const questions = readList(qSnap);
+      const reviewCards = readList(cardSnap);
+      const examResults = readList(examSnap);
+      const oralPractices = readList(oralSnap);
+      const studyLogs = readList(logSnap);
+      const syllabus = readList(sylSnap);
+
+      const hasLegacyData =
+        progress.length > 0 ||
+        questions.length > 0 ||
+        reviewCards.length > 0 ||
+        examResults.length > 0 ||
+        oralPractices.length > 0 ||
+        studyLogs.length > 0;
+
+      // 順手清除遺留頂層設定內的明文 API Key
+      if (cfgDoc.exists && cfgDoc.data() && 'geminiApiKey' in cfgDoc.data()) {
+        try {
+          await dbInstance.collection('config').doc('settings').update({
+            geminiApiKey: firebase.firestore.FieldValue.delete()
+          });
+        } catch (err) {}
+      }
+
+      if (!hasLegacyData) return false;
+
+      const dataset = {
+        config: this._stripSecrets(cfgDoc.exists ? cfgDoc.data() : DEFAULT_CONFIGS),
+        syllabus: syllabus.length > 0 ? syllabus : DEFAULT_SYLLABUS,
+        progress,
+        questions,
+        reviewCards,
+        examResults,
+        oralPractices,
+        studyLogs
+      };
+
+      await this.syncToFirestore(dataset);
+      return true;
+    } catch (e) {
+      // 非遺留資料擁有者會收到 permission-denied，屬預期行為
+      return false;
+    }
+  },
+
+  // ==========================================
+  // 資料庫初始化與跨裝置同步
+  // ==========================================
+  _initInFlight: null,
+
+  async init(forceSeeding = false) {
+    if (!forceSeeding && this._initInFlight) {
+      return await this._initInFlight;
+    }
+    const task = this._runInit(forceSeeding);
+    if (!forceSeeding) {
+      this._initInFlight = task;
+    }
+    try {
+      return await task;
+    } finally {
+      if (this._initInFlight === task) {
+        this._initInFlight = null;
+      }
+    }
+  },
+
+  async _runInit(forceSeeding = false) {
+    this._purgeLocalStoredApiKey();
+    const db = initFirebaseApp();
+    await waitForInitialAuth();
+
+    if (currentUser && currentUser.uid) {
+      const lastUid = localStorage.getItem('mp_last_uid');
+      if (lastUid && lastUid !== currentUser.uid) {
+        this.clearLocalUserCache();
+      }
+      localStorage.setItem('mp_last_uid', currentUser.uid);
+    }
+
+    if (db && currentUser) {
       try {
         const probe = await verifyFirebaseConnection();
         if (probe.connected) {
-          const syllabusSnap = await db.collection('syllabus').get();
-          if (syllabusSnap.empty || forceSeeding) {
-            // 檢查本機是否有既有使用者資料，若有則連同課綱一併上雲，避免切換雲端時「資料看似消失」
-            const hasLocalUserData = this._hasLocalUserData();
-            if (syllabusSnap.empty && hasLocalUserData && !forceSeeding) {
-              console.log('[DB] 偵測到全新 Firestore 且本機已有學習紀錄，自動執行上雲遷移...');
-              await this.pushLocalToFirebase();
-              return { success: true, message: '已自動將本機資料同步遷移至 Firebase Firestore' };
+          await this._purgeCloudApiKeyField();
+          const syllabusSnap = await this._col('syllabus').get();
+
+          if (syllabusSnap.empty && !forceSeeding) {
+            const migratedLegacy = await this._migrateLegacyTopLevelToUser();
+            if (migratedLegacy) {
+              await this.trySilentBrowserAutofill(false);
+              return { success: true, message: '已將雲端舊版資料安全遷移至個人 Google 帳號空間並移除明文金鑰' };
             }
 
-            const batch = db.batch();
+            if (this._hasLocalUserData()) {
+              await this.pushLocalToFirebase();
+              await this.trySilentBrowserAutofill(false);
+              return { success: true, message: '已將本機學習資料同步至個人 Google 雲端空間' };
+            }
+
+            const batch = dbInstance.batch();
             DEFAULT_SYLLABUS.forEach((unit) => {
-              batch.set(db.collection('syllabus').doc(unit.unitId), unit);
+              batch.set(this._col('syllabus').doc(unit.unitId), unit);
             });
-            batch.set(db.collection('config').doc('settings'), DEFAULT_CONFIGS, { merge: true });
+            batch.set(this._col('config').doc('settings'), this._stripSecrets(DEFAULT_CONFIGS), { merge: true });
             await batch.commit();
+          } else if (forceSeeding) {
+            const batch = dbInstance.batch();
+            DEFAULT_SYLLABUS.forEach((unit) => {
+              batch.set(this._col('syllabus').doc(unit.unitId), unit);
+            });
+            batch.set(this._col('config').doc('settings'), this._stripSecrets(DEFAULT_CONFIGS), { merge: true });
+            await batch.commit();
+          } else if (!this._hasLocalUserData()) {
+            // 新裝置登入已有雲端資料時，自動預熱本機離線快取
+            await this.pullFirebaseToLocal();
           }
-          return { success: true, message: 'Firestore 資料庫連線成功' };
+
+          await this.trySilentBrowserAutofill(false);
+          return { success: true, message: 'Google 帳號雲端空間連線成功' };
         }
       } catch (err) {
         console.error('[DB] Firestore 初始化失敗，降級至 LocalStorage:', err);
       }
     }
 
-    // LocalStorage 降級模式
+    // 未登入或離線：LocalStorage 降級模式
     const localSyllabus = this._getLocal('syllabus');
     if (!localSyllabus || localSyllabus.length === 0 || forceSeeding) {
       this._setLocal('syllabus', DEFAULT_SYLLABUS);
       if (!this._getLocal('config')) {
-        this._setLocal('config', DEFAULT_CONFIGS);
+        this._setLocal('config', this._stripSecrets(DEFAULT_CONFIGS));
       }
     }
-    return { success: true, message: '本機資料庫初始化成功 (LocalStorage)' };
+    return {
+      success: true,
+      message: currentUser ? '本機離線快取模式' : '未登入 Google 帳號，目前使用本機暫存模式'
+    };
   },
 
   _hasLocalUserData() {
@@ -61,12 +327,15 @@ const DB = {
   },
 
   // ==========================================
-  // Config 設定存取
+  // Config 設定存取 (嚴格攔截 geminiApiKey)
   // ==========================================
   async getConfig(key) {
-    if (dbInstance && isFirebaseConnected) {
+    if (key === 'geminiApiKey') {
+      return this.getGeminiKey();
+    }
+    if (this._isCloudReady()) {
       try {
-        const doc = await dbInstance.collection('config').doc('settings').get();
+        const doc = await this._col('config').doc('settings').get();
         if (doc.exists && doc.data()[key] !== undefined) {
           return doc.data()[key];
         }
@@ -74,30 +343,35 @@ const DB = {
         console.warn(`[DB] 讀取 Firestore Config 失敗 (${key}):`, e);
       }
     }
-    const local = this._getLocal('config') || DEFAULT_CONFIGS;
+    const local = this._stripSecrets(this._getLocal('config') || DEFAULT_CONFIGS);
     return local[key] !== undefined ? local[key] : (DEFAULT_CONFIGS[key] || '');
   },
 
   async getAllConfig() {
-    if (dbInstance && isFirebaseConnected) {
+    if (this._isCloudReady()) {
       try {
-        const doc = await dbInstance.collection('config').doc('settings').get();
+        const doc = await this._col('config').doc('settings').get();
         if (doc.exists) {
-          return { ...DEFAULT_CONFIGS, ...doc.data() };
+          return this._stripSecrets({ ...DEFAULT_CONFIGS, ...doc.data() });
         }
       } catch (e) {}
     }
-    return { ...DEFAULT_CONFIGS, ...(this._getLocal('config') || {}) };
+    return this._stripSecrets({ ...DEFAULT_CONFIGS, ...(this._getLocal('config') || {}) });
   },
 
   async saveConfig(key, value) {
-    const local = this._getLocal('config') || { ...DEFAULT_CONFIGS };
+    if (key === 'geminiApiKey') {
+      this.saveGeminiKey(value);
+      return true;
+    }
+
+    const local = this._stripSecrets(this._getLocal('config') || DEFAULT_CONFIGS);
     local[key] = value;
     this._setLocal('config', local);
 
-    if (dbInstance && isFirebaseConnected) {
+    if (this._isCloudReady()) {
       try {
-        await dbInstance.collection('config').doc('settings').set({ [key]: value }, { merge: true });
+        await this._col('config').doc('settings').set({ [key]: value }, { merge: true });
       } catch (e) {
         console.warn(`[DB] 寫入 Firestore Config 失敗 (${key}):`, e);
       }
@@ -109,9 +383,9 @@ const DB = {
   // 課綱 (Syllabus)
   // ==========================================
   async getSyllabus() {
-    if (dbInstance && isFirebaseConnected) {
+    if (this._isCloudReady()) {
       try {
-        const snap = await dbInstance.collection('syllabus').get();
+        const snap = await this._col('syllabus').get();
         if (!snap.empty) {
           const list = [];
           snap.forEach((doc) => list.push(doc.data()));
@@ -133,9 +407,9 @@ const DB = {
   // 學習進度 (Progress)
   // ==========================================
   async getRawProgressRecords() {
-    if (dbInstance && isFirebaseConnected) {
+    if (this._isCloudReady()) {
       try {
-        const snap = await dbInstance.collection('progress').get();
+        const snap = await this._col('progress').get();
         const records = [];
         snap.forEach((doc) => records.push({ unitId: doc.id, ...doc.data() }));
         return records;
@@ -204,9 +478,9 @@ const DB = {
       updatedAt: new Date().toISOString()
     };
 
-    if (dbInstance && isFirebaseConnected) {
+    if (this._isCloudReady()) {
       try {
-        await dbInstance.collection('progress').doc(unitId).set(dataToSave, { merge: true });
+        await this._col('progress').doc(unitId).set(dataToSave, { merge: true });
       } catch (e) {
         console.warn('[DB] 寫入 Firestore Progress 失敗:', e);
       }
@@ -240,9 +514,9 @@ const DB = {
       updatedAt: new Date().toISOString()
     };
 
-    if (dbInstance && isFirebaseConnected) {
+    if (this._isCloudReady()) {
       try {
-        await dbInstance.collection('progress').doc(unitId).set(dataToSave, { merge: true });
+        await this._col('progress').doc(unitId).set(dataToSave, { merge: true });
       } catch (e) {
         console.warn('[DB] 寫入 Firestore StudyGuide 失敗:', e);
       }
@@ -261,9 +535,9 @@ const DB = {
   // ==========================================
   async getQuestions(moduleId, topicId) {
     let allQs = [];
-    if (dbInstance && isFirebaseConnected) {
+    if (this._isCloudReady()) {
       try {
-        const snap = await dbInstance.collection('questions').get();
+        const snap = await this._col('questions').get();
         snap.forEach((doc) => allQs.push(doc.data()));
       } catch (e) {
         console.warn('[DB] 讀取 Firestore Questions 失敗，使用 LocalStorage:', e);
@@ -306,9 +580,9 @@ const DB = {
       createdAt: new Date().toISOString().split('T')[0]
     };
 
-    if (dbInstance && isFirebaseConnected) {
+    if (this._isCloudReady()) {
       try {
-        await dbInstance.collection('questions').doc(qId).set(newQ);
+        await this._col('questions').doc(qId).set(newQ);
       } catch (e) {
         console.warn('[DB] 寫入 Firestore Question 失敗:', e);
       }
@@ -323,7 +597,7 @@ const DB = {
   async insertQuestions(questionsArray) {
     if (!questionsArray || questionsArray.length === 0) return true;
 
-    if (dbInstance && isFirebaseConnected) {
+    if (this._isCloudReady()) {
       try {
         await this._batchWriteCollection('questions', questionsArray, 'questionId');
       } catch (e) {
@@ -338,9 +612,9 @@ const DB = {
   },
 
   async verifyQuestion(questionId) {
-    if (dbInstance && isFirebaseConnected) {
+    if (this._isCloudReady()) {
       try {
-        await dbInstance.collection('questions').doc(questionId).update({ verified: true });
+        await this._col('questions').doc(questionId).update({ verified: true });
       } catch (e) {
         console.warn('[DB] 更新 Firestore 題目驗證狀態失敗:', e);
       }
@@ -355,9 +629,9 @@ const DB = {
   },
 
   async deleteQuestion(questionId) {
-    if (dbInstance && isFirebaseConnected) {
+    if (this._isCloudReady()) {
       try {
-        await dbInstance.collection('questions').doc(questionId).delete();
+        await this._col('questions').doc(questionId).delete();
       } catch (e) {
         console.warn('[DB] 刪除 Firestore Question 失敗:', e);
       }
@@ -515,9 +789,9 @@ const DB = {
       createdAt: new Date().toISOString()
     };
 
-    if (dbInstance && isFirebaseConnected) {
+    if (this._isCloudReady()) {
       try {
-        await dbInstance.collection('examResults').doc(examId).set(examRecord);
+        await this._col('examResults').doc(examId).set(examRecord);
       } catch (e) {
         console.warn('[DB] 儲存 Firestore 測驗結果失敗:', e);
       }
@@ -532,9 +806,9 @@ const DB = {
 
   async getExamResults() {
     let data = [];
-    if (dbInstance && isFirebaseConnected) {
+    if (this._isCloudReady()) {
       try {
-        const snap = await dbInstance.collection('examResults').get();
+        const snap = await this._col('examResults').get();
         snap.forEach((doc) => data.push(doc.data()));
       } catch (e) {
         console.warn('[DB] 讀取 Firestore 測驗紀錄失敗，使用 LocalStorage:', e);
@@ -565,9 +839,9 @@ const DB = {
   // ==========================================
   async getReviewCards() {
     let cards = [];
-    if (dbInstance && isFirebaseConnected) {
+    if (this._isCloudReady()) {
       try {
-        const snap = await dbInstance.collection('reviewCards').get();
+        const snap = await this._col('reviewCards').get();
         snap.forEach((doc) => cards.push(doc.data()));
       } catch (e) {
         console.warn('[DB] 讀取 Firestore ReviewCards 失敗，使用 LocalStorage:', e);
@@ -606,9 +880,9 @@ const DB = {
       updatedAt: new Date().toISOString()
     };
 
-    if (dbInstance && isFirebaseConnected) {
+    if (this._isCloudReady()) {
       try {
-        await dbInstance.collection('reviewCards').doc(card.cardId).set(card);
+        await this._col('reviewCards').doc(card.cardId).set(card);
       } catch (e) {
         console.warn('[DB] 寫入 Firestore ReviewCard 失敗:', e);
       }
@@ -622,7 +896,7 @@ const DB = {
 
   async insertReviewCards(cardsArray) {
     if (!cardsArray || cardsArray.length === 0) return true;
-    if (dbInstance && isFirebaseConnected) {
+    if (this._isCloudReady()) {
       try {
         await this._batchWriteCollection('reviewCards', cardsArray, 'cardId');
       } catch (e) {
@@ -636,9 +910,9 @@ const DB = {
   },
 
   async deleteReviewCard(cardId) {
-    if (dbInstance && isFirebaseConnected) {
+    if (this._isCloudReady()) {
       try {
-        await dbInstance.collection('reviewCards').doc(cardId).delete();
+        await this._col('reviewCards').doc(cardId).delete();
       } catch (e) {
         console.warn('[DB] 刪除 Firestore ReviewCard 失敗:', e);
       }
@@ -685,9 +959,9 @@ const DB = {
       updatedAt: new Date().toISOString()
     };
 
-    if (dbInstance && isFirebaseConnected) {
+    if (this._isCloudReady()) {
       try {
-        await dbInstance.collection('reviewCards').doc(cardId).update(updatedData);
+        await this._col('reviewCards').doc(cardId).update(updatedData);
       } catch (e) {
         console.warn('[DB] 更新 Firestore ReviewCard SM-2 排程失敗:', e);
       }
@@ -708,9 +982,9 @@ const DB = {
   // ==========================================
   async getOralPractices() {
     let data = [];
-    if (dbInstance && isFirebaseConnected) {
+    if (this._isCloudReady()) {
       try {
-        const snap = await dbInstance.collection('oralPractices').get();
+        const snap = await this._col('oralPractices').get();
         snap.forEach((doc) => data.push(doc.data()));
       } catch (e) {
         console.warn('[DB] 讀取 Firestore OralPractices 失敗，使用 LocalStorage:', e);
@@ -733,9 +1007,9 @@ const DB = {
   },
 
   async saveOralPractice(record) {
-    if (dbInstance && isFirebaseConnected) {
+    if (this._isCloudReady()) {
       try {
-        await dbInstance.collection('oralPractices').doc(record.practiceId).set(record);
+        await this._col('oralPractices').doc(record.practiceId).set(record);
       } catch (e) {
         console.warn('[DB] 儲存 Firestore OralPractice 失敗:', e);
       }
@@ -751,9 +1025,9 @@ const DB = {
   // ==========================================
   async getStudyLogs() {
     let data = [];
-    if (dbInstance && isFirebaseConnected) {
+    if (this._isCloudReady()) {
       try {
-        const snap = await dbInstance.collection('studyLogs').get();
+        const snap = await this._col('studyLogs').get();
         snap.forEach((doc) => data.push(doc.data()));
       } catch (e) {
         console.warn('[DB] 讀取 Firestore StudyLogs 失敗，使用 LocalStorage:', e);
@@ -784,9 +1058,9 @@ const DB = {
       createdAt: new Date().toISOString()
     };
 
-    if (dbInstance && isFirebaseConnected) {
+    if (this._isCloudReady()) {
       try {
-        await dbInstance.collection('studyLogs').doc(logId).set(record);
+        await this._col('studyLogs').doc(logId).set(record);
       } catch (e) {
         console.warn('[DB] 儲存 Firestore StudyLog 失敗:', e);
       }
@@ -909,16 +1183,16 @@ const DB = {
   },
 
   // ==========================================
-  // Firebase 資料庫搬移引擎 (Ponytail 共用批次寫入核心)
+  // Firebase 資料庫搬移引擎
   // ==========================================
   async _batchWriteCollection(colName, items, idKey) {
-    if (!dbInstance || !items || items.length === 0) return 0;
+    if (!dbInstance || !currentUser || !items || items.length === 0) return 0;
     const chunks = this._chunkArray(items, 400);
     for (const chunk of chunks) {
       const batch = dbInstance.batch();
       chunk.forEach((item) => {
         const id = String(item[idKey] || crypto.randomUUID());
-        const ref = dbInstance.collection(colName).doc(id);
+        const ref = this._col(colName).doc(id);
         batch.set(ref, item, { merge: true });
       });
       await batch.commit();
@@ -928,7 +1202,7 @@ const DB = {
 
   _normalizeDataset(raw) {
     const normalized = {
-      config: DEFAULT_CONFIGS,
+      config: this._stripSecrets(DEFAULT_CONFIGS),
       syllabus: DEFAULT_SYLLABUS,
       progress: [],
       questions: [],
@@ -941,11 +1215,13 @@ const DB = {
     if (Array.isArray(raw.config)) {
       const cfg = { ...DEFAULT_CONFIGS };
       raw.config.forEach((row) => {
-        if (row.key) cfg[row.key] = row.value !== undefined ? String(row.value) : '';
+        if (row.key && row.key !== 'geminiApiKey') {
+          cfg[row.key] = row.value !== undefined ? String(row.value) : '';
+        }
       });
-      normalized.config = cfg;
+      normalized.config = this._stripSecrets(cfg);
     } else if (raw.config && typeof raw.config === 'object') {
-      normalized.config = { ...DEFAULT_CONFIGS, ...raw.config };
+      normalized.config = this._stripSecrets({ ...DEFAULT_CONFIGS, ...raw.config });
     }
 
     if (Array.isArray(raw.syllabus) && raw.syllabus.length > 0) {
@@ -1036,9 +1312,9 @@ const DB = {
 
   async syncToFirestore(rawData) {
     const data = this._normalizeDataset(rawData);
+    const cleanConfig = this._stripSecrets(data.config);
 
-    // 1. 先寫入 LocalStorage 保障即時可用
-    this._setLocal('config', data.config);
+    this._setLocal('config', cleanConfig);
     this._setLocal('syllabus', data.syllabus);
     this._setLocal('progress', data.progress);
     this._setLocal('questions', data.questions);
@@ -1047,11 +1323,12 @@ const DB = {
     this._setLocal('oralPractices', data.oralPractices);
     this._setLocal('studyLogs', data.studyLogs);
 
-    if (!dbInstance || !isFirebaseConnected) {
-      throw new Error('尚未連線至 Firebase Firestore，僅儲存於本機 LocalStorage');
+    if (!this._isCloudReady()) {
+      throw new Error('尚未登入 Google 帳號或尚未連線至 Firestore，僅儲存於本機');
     }
 
-    await dbInstance.collection('config').doc('settings').set(data.config, { merge: true });
+    await this._col('config').doc('settings').set(cleanConfig, { merge: true });
+    await this._purgeCloudApiKeyField();
     await this._batchWriteCollection('syllabus', data.syllabus, 'unitId');
     await this._batchWriteCollection('progress', data.progress, 'unitId');
     await this._batchWriteCollection('questions', data.questions, 'questionId');
@@ -1071,9 +1348,6 @@ const DB = {
     };
   },
 
-  /**
-   * 路徑 1：將本機 LocalStorage 所有資料推送至 Firebase
-   */
   async pushLocalToFirebase() {
     const probe = await verifyFirebaseConnection();
     if (!probe.connected) {
@@ -1081,7 +1355,7 @@ const DB = {
     }
 
     const localData = {
-      config: this._getLocal('config') || DEFAULT_CONFIGS,
+      config: this._stripSecrets(this._getLocal('config') || DEFAULT_CONFIGS),
       syllabus: this._getLocal('syllabus') || DEFAULT_SYLLABUS,
       progress: this._getLocal('progress') || [],
       questions: this._getLocal('questions') || [],
@@ -1095,24 +1369,23 @@ const DB = {
     return { success: true, counts };
   },
 
-  /**
-   * 路徑 2：從 Firebase Firestore 下載最新資料至本機 LocalStorage
-   */
   async pullFirebaseToLocal() {
     const probe = await verifyFirebaseConnection();
-    if (!probe.connected || !dbInstance) {
+    if (!probe.connected || !this._isCloudReady()) {
       throw new Error(probe.reason || '無法連線至 Firebase Firestore');
     }
 
     const fetchCol = async (name) => {
-      const snap = await dbInstance.collection(name).get();
+      const snap = await this._col(name).get();
       const arr = [];
       snap.forEach((doc) => arr.push(doc.data()));
       return arr;
     };
 
-    const configDoc = await dbInstance.collection('config').doc('settings').get();
-    const config = configDoc.exists ? { ...DEFAULT_CONFIGS, ...configDoc.data() } : DEFAULT_CONFIGS;
+    const configDoc = await this._col('config').doc('settings').get();
+    const config = this._stripSecrets(
+      configDoc.exists ? { ...DEFAULT_CONFIGS, ...configDoc.data() } : DEFAULT_CONFIGS
+    );
 
     const [syllabus, progress, questions, reviewCards, examResults, oralPractices, studyLogs] =
       await Promise.all([
@@ -1148,9 +1421,6 @@ const DB = {
     };
   },
 
-  /**
-   * 路徑 3：從舊版 Google Sheet 免後端直連遷移至 Firebase
-   */
   async migrateFromGoogleSheet(sheetIdOrUrl) {
     const raw = (sheetIdOrUrl || LEGACY_GSHEET_ID).trim();
     const idMatch = raw.match(/\/d\/([a-zA-Z0-9-_]+)/);
@@ -1159,7 +1429,7 @@ const DB = {
 
     const probe = await verifyFirebaseConnection();
     if (!probe.connected) {
-      throw new Error('請先完成 Firebase 連線設定，再執行試算表搬移：' + (probe.reason || ''));
+      throw new Error('請先登入 Google 帳號並完成 Firebase 連線設定：' + (probe.reason || ''));
     }
 
     const sheetsMap = {
@@ -1218,9 +1488,6 @@ const DB = {
     return { success: true, counts };
   },
 
-  /**
-   * 取得本機 vs. Firebase 雲端筆數統計
-   */
   async getStorageStats() {
     const local = {
       progress: (this._getLocal('progress') || []).length,
@@ -1232,10 +1499,10 @@ const DB = {
     };
 
     let cloud = null;
-    if (dbInstance && isFirebaseConnected) {
+    if (this._isCloudReady()) {
       try {
         const cols = ['progress', 'questions', 'reviewCards', 'examResults', 'oralPractices', 'studyLogs'];
-        const snaps = await Promise.all(cols.map((c) => dbInstance.collection(c).get()));
+        const snaps = await Promise.all(cols.map((c) => this._col(c).get()));
         cloud = {};
         cols.forEach((c, i) => {
           cloud[c] = snaps[i].size;
@@ -1248,14 +1515,11 @@ const DB = {
     return { local, cloud };
   },
 
-  // ==========================================
-  // 資料庫一鍵完整備份與還原 (JSON Export / Import)
-  // ==========================================
   async exportAllDataJSON() {
     const backup = {
-      version: '3.0',
+      version: '3.5',
       exportedAt: new Date().toISOString(),
-      config: await this.getAllConfig(),
+      config: this._stripSecrets(await this.getAllConfig()),
       syllabus: await this.getSyllabus(),
       progress: await this.getRawProgressRecords(),
       questions: await this.getQuestions(),
@@ -1274,12 +1538,12 @@ const DB = {
         throw new Error('備份檔案格式不正確 (找不到 syllabus 資料)');
       }
 
-      if (dbInstance && isFirebaseConnected) {
+      if (this._isCloudReady()) {
         const counts = await this.syncToFirestore(data);
-        return { success: true, message: `已完整還原並同步至 Firebase (${counts.questions} 題庫 / ${counts.reviewCards} 閃卡)` };
+        return { success: true, message: `已完整還原並同步至個人雲端空間 (${counts.questions} 題庫 / ${counts.reviewCards} 閃卡)` };
       } else {
         const normalized = this._normalizeDataset(data);
-        this._setLocal('config', normalized.config);
+        this._setLocal('config', this._stripSecrets(normalized.config));
         this._setLocal('syllabus', normalized.syllabus);
         this._setLocal('progress', normalized.progress);
         this._setLocal('questions', normalized.questions);
@@ -1287,16 +1551,13 @@ const DB = {
         this._setLocal('examResults', normalized.examResults);
         this._setLocal('oralPractices', normalized.oralPractices);
         this._setLocal('studyLogs', normalized.studyLogs);
-        return { success: true, message: '資料庫已成功還原至本機儲存！' };
+        return { success: true, message: '資料庫已成功還原至本機儲存（不含任何 API Key）！' };
       }
     } catch (e) {
       throw new Error('還原失敗: ' + e.message);
     }
   },
 
-  // ==========================================
-  // 內部輔助方法 (Helpers)
-  // ==========================================
   _getLocal(key) {
     try {
       const v = localStorage.getItem(`mp_${key}`);

@@ -339,6 +339,5 @@ const DEFAULT_CONFIGS = {
   startDate: new Date().toISOString().split('T')[0],
   dailyGoalMinutes: '45',
   notebookLmUrl: '',
-  geminiApiKey: '',
   geminiModel: 'gemini-2.5-flash'
 };

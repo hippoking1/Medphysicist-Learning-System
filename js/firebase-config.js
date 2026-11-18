@@ -1,6 +1,6 @@
 /**
- * 醫學物理師考照自學系統 - Firebase 初始化與配置 (firebase-config.js)
- * 支援整段 firebaseConfig 智慧貼上、真實雲端連線探針與 LocalStorage 自動降級
+ * 醫學物理師考照自學系統 - Firebase 初始化、Google Auth 認證與連線探針 (firebase-config.js)
+ * 部署時由 GitHub Actions Secrets 注入 DEFAULT_FIREBASE_CONFIG，原始碼不含任何實質憑證
  */
 
 const DEFAULT_FIREBASE_CONFIG = {
@@ -12,13 +12,20 @@ const DEFAULT_FIREBASE_CONFIG = {
   appId: ''
 };
 
+const GEMINI_OAUTH_SCOPE = 'https://www.googleapis.com/auth/generative-language';
+const OAUTH_TOKEN_KEY = 'mp_google_oauth_token';
+const OAUTH_EXPIRES_KEY = 'mp_google_oauth_expires_at';
+const OAUTH_SCOPE_FLAG = 'mp_oauth_gemini_requested';
+
 let dbInstance = null;
+let authInstance = null;
+let currentUser = null;
 let isFirebaseConnected = false;
 let firebaseConnectionError = '';
+let _authInitialized = false;
+let _initialAuthPromise = null;
+const _authListeners = new Set();
 
-/**
- * 解析使用者貼上的整段 firebaseConfig JS 物件或 JSON 字串
- */
 function parseFirebaseConfigInput(rawText) {
   if (!rawText || typeof rawText !== 'string') return null;
   const text = rawText.trim();
@@ -46,9 +53,10 @@ function parseFirebaseConfigInput(rawText) {
   return null;
 }
 
-/**
- * 取得當前使用的 Firebase 配置
- */
+function isInjectedFirebaseConfig() {
+  return Boolean(DEFAULT_FIREBASE_CONFIG.projectId && DEFAULT_FIREBASE_CONFIG.apiKey);
+}
+
 function getActiveFirebaseConfig() {
   try {
     const saved = localStorage.getItem('mp_custom_firebase_config');
@@ -64,9 +72,6 @@ function getActiveFirebaseConfig() {
   return DEFAULT_FIREBASE_CONFIG;
 }
 
-/**
- * 儲存自訂 Firebase 配置
- */
 function saveCustomFirebaseConfig(configObj) {
   if (!configObj || !configObj.projectId || !configObj.apiKey) {
     localStorage.removeItem('mp_custom_firebase_config');
@@ -76,9 +81,57 @@ function saveCustomFirebaseConfig(configObj) {
   return true;
 }
 
-/**
- * 初始化 Firebase SDK 與 Firestore 實例
- */
+function _storeGoogleOAuthToken(accessToken) {
+  if (!accessToken) return;
+  try {
+    sessionStorage.setItem(OAUTH_TOKEN_KEY, accessToken);
+    // Google OAuth Access Token 效期約 60 分鐘，預留緩衝抓 50 分鐘
+    sessionStorage.setItem(OAUTH_EXPIRES_KEY, String(Date.now() + 50 * 60 * 1000));
+  } catch (e) {}
+}
+
+function getGoogleOAuthToken() {
+  try {
+    const token = sessionStorage.getItem(OAUTH_TOKEN_KEY) || '';
+    const exp = Number(sessionStorage.getItem(OAUTH_EXPIRES_KEY) || 0);
+    if (!token || (exp && Date.now() >= exp)) {
+      clearGoogleOAuthToken();
+      return '';
+    }
+    return token;
+  } catch (e) {
+    return '';
+  }
+}
+
+function clearGoogleOAuthToken() {
+  try {
+    sessionStorage.removeItem(OAUTH_TOKEN_KEY);
+    sessionStorage.removeItem(OAUTH_EXPIRES_KEY);
+    sessionStorage.removeItem(OAUTH_SCOPE_FLAG);
+  } catch (e) {}
+}
+
+function getCurrentUser() {
+  return currentUser;
+}
+
+function onAuthChanged(listener) {
+  if (typeof listener !== 'function') return () => {};
+  _authListeners.add(listener);
+  return () => _authListeners.delete(listener);
+}
+
+function _notifyAuthListeners(user) {
+  _authListeners.forEach((fn) => {
+    try {
+      fn(user);
+    } catch (e) {
+      console.warn('[Auth] listener error:', e);
+    }
+  });
+}
+
 function initFirebaseApp() {
   const config = getActiveFirebaseConfig();
   firebaseConnectionError = '';
@@ -109,7 +162,12 @@ function initFirebaseApp() {
     } catch (e) {}
 
     dbInstance = db;
-    isFirebaseConnected = true;
+
+    if (typeof firebase.auth === 'function' && !authInstance) {
+      authInstance = firebase.auth();
+      _bindAuthLifecycle();
+    }
+
     return db;
   } catch (err) {
     console.error('[Firebase] 初始化失敗:', err);
@@ -119,9 +177,150 @@ function initFirebaseApp() {
   }
 }
 
-/**
- * 主動對 Firestore Server 發起真實連線探針（檢查 Project ID 與 Security Rules）
- */
+function _bindAuthLifecycle() {
+  if (!authInstance || _authInitialized) return;
+  _authInitialized = true;
+
+  _initialAuthPromise = new Promise((resolve) => {
+    let resolved = false;
+    const finish = (user) => {
+      if (!resolved) {
+        resolved = true;
+        resolve(user);
+      }
+    };
+
+    const timer = setTimeout(() => finish(authInstance.currentUser || null), 2500);
+
+    // 行動裝置瀏覽器經由 signInWithRedirect 返回時接收 OAuth Token
+    authInstance
+      .getRedirectResult()
+      .then((res) => {
+        if (res && res.credential && res.credential.accessToken) {
+          if (sessionStorage.getItem(OAUTH_SCOPE_FLAG) === '1') {
+            _storeGoogleOAuthToken(res.credential.accessToken);
+            sessionStorage.removeItem(OAUTH_SCOPE_FLAG);
+          }
+        }
+      })
+      .catch((err) => {
+        console.warn('[Auth] Redirect 結果處理異常:', err.message || err);
+      });
+
+    authInstance.onAuthStateChanged((user) => {
+      clearTimeout(timer);
+      const prevUid = currentUser ? currentUser.uid : null;
+      const nextUid = user ? user.uid : null;
+      currentUser = user || null;
+      if (!currentUser) {
+        isFirebaseConnected = false;
+      }
+      finish(currentUser);
+      if (resolved && prevUid !== nextUid) {
+        _notifyAuthListeners(currentUser);
+      }
+    });
+  });
+}
+
+async function waitForInitialAuth() {
+  if (!authInstance) {
+    initFirebaseApp();
+  }
+  if (_initialAuthPromise) {
+    return await _initialAuthPromise;
+  }
+  return currentUser;
+}
+
+function _buildGoogleProvider(requestGeminiScope = false) {
+  const provider = new firebase.auth.GoogleAuthProvider();
+  if (requestGeminiScope) {
+    provider.addScope(GEMINI_OAUTH_SCOPE);
+    provider.setCustomParameters({ prompt: 'consent select_account' });
+  } else {
+    provider.setCustomParameters({ prompt: 'select_account' });
+  }
+  return provider;
+}
+
+async function signInWithGoogle(options = {}) {
+  const config = getActiveFirebaseConfig();
+  if (!config.projectId || !config.apiKey) {
+    throw new Error('尚未設定 Firebase 連線專案，請先設定 FIREBASE_CONFIG 或於系統設定輸入專案資料');
+  }
+  if (!authInstance) initFirebaseApp();
+  if (!authInstance) {
+    throw new Error('Firebase Authentication 模組未就緒');
+  }
+
+  const requestGeminiScope = Boolean(options.requestGeminiScope);
+  const provider = _buildGoogleProvider(requestGeminiScope);
+
+  try {
+    const result = await authInstance.signInWithPopup(provider);
+    currentUser = result.user || authInstance.currentUser;
+    if (requestGeminiScope && result.credential && result.credential.accessToken) {
+      _storeGoogleOAuthToken(result.credential.accessToken);
+    }
+    return { user: currentUser, hasOAuthToken: Boolean(getGoogleOAuthToken()) };
+  } catch (err) {
+    if (err.code === 'auth/popup-blocked' || err.code === 'auth/operation-not-supported-in-this-environment') {
+      if (requestGeminiScope) sessionStorage.setItem(OAUTH_SCOPE_FLAG, '1');
+      await authInstance.signInWithRedirect(provider);
+      return { redirecting: true };
+    }
+    if (err.code === 'auth/unauthorized-domain') {
+      throw new Error(`此網域 (${location.hostname}) 尚未加入 Firebase Console → Authentication → Authorized domains`);
+    }
+    if (err.code === 'auth/operation-not-allowed') {
+      throw new Error('請先至 Firebase Console → Authentication → Sign-in method 啟用 Google 登入');
+    }
+    throw err;
+  }
+}
+
+async function authorizeGeminiOAuth() {
+  if (!authInstance) initFirebaseApp();
+  if (!authInstance || !authInstance.currentUser) {
+    return await signInWithGoogle({ requestGeminiScope: true });
+  }
+
+  const provider = _buildGoogleProvider(true);
+  try {
+    const result = await authInstance.currentUser.reauthenticateWithPopup(provider);
+    if (result.credential && result.credential.accessToken) {
+      _storeGoogleOAuthToken(result.credential.accessToken);
+      return { success: true, token: result.credential.accessToken };
+    }
+    throw new Error('Google 未回傳 Gemini OAuth Access Token');
+  } catch (err) {
+    if (err.code === 'auth/popup-blocked') {
+      sessionStorage.setItem(OAUTH_SCOPE_FLAG, '1');
+      await authInstance.currentUser.reauthenticateWithRedirect(provider);
+      return { redirecting: true };
+    }
+    throw err;
+  }
+}
+
+async function signOutGoogle() {
+  clearGoogleOAuthToken();
+  try {
+    sessionStorage.removeItem('mp_session_gemini_key');
+  } catch (e) {}
+
+  if (typeof DB !== 'undefined' && typeof DB.clearLocalUserCache === 'function') {
+    DB.clearLocalUserCache();
+  }
+
+  isFirebaseConnected = false;
+  currentUser = null;
+  if (authInstance) {
+    await authInstance.signOut();
+  }
+}
+
 async function verifyFirebaseConnection() {
   const config = getActiveFirebaseConfig();
   if (!config.projectId || !config.apiKey) {
@@ -137,22 +336,51 @@ async function verifyFirebaseConnection() {
     return { connected: false, mode: 'local', reason: firebaseConnectionError || 'Firestore 初始化失敗' };
   }
 
+  await waitForInitialAuth();
+
+  if (!currentUser) {
+    isFirebaseConnected = false;
+    firebaseConnectionError = '尚未登入 Google 帳號';
+    return {
+      connected: false,
+      mode: 'auth-required',
+      projectId: config.projectId,
+      reason: '請先登入 Google 帳號以啟用個人雲端資料庫同步'
+    };
+  }
+
   try {
-    await dbInstance.collection('config').doc('settings').get({ source: 'server' });
+    await dbInstance
+      .collection('users')
+      .doc(currentUser.uid)
+      .collection('config')
+      .doc('settings')
+      .get({ source: 'server' });
     isFirebaseConnected = true;
     firebaseConnectionError = '';
-    return { connected: true, mode: 'cloud', projectId: config.projectId };
+    return {
+      connected: true,
+      mode: 'cloud',
+      projectId: config.projectId,
+      uid: currentUser.uid,
+      email: currentUser.email
+    };
   } catch (err) {
-    // 若為 offline 錯誤但本地已有設定，允許走 Firestore 離線快取；若是權限拒絕則明確回報
     if (err.code === 'permission-denied') {
       isFirebaseConnected = false;
-      firebaseConnectionError = 'Firestore 安全性規則拒絕存取 (permission-denied)，請檢查 Rules';
+      firebaseConnectionError = 'Firestore 安全性規則拒絕存取 (permission-denied)，請確認已部署新版 firestore.rules';
       return { connected: false, mode: 'error', reason: firebaseConnectionError };
     }
     if (err.code === 'unavailable') {
       isFirebaseConnected = true;
       firebaseConnectionError = '目前處於離線快取模式';
-      return { connected: true, mode: 'offline-cache', projectId: config.projectId, reason: firebaseConnectionError };
+      return {
+        connected: true,
+        mode: 'offline-cache',
+        projectId: config.projectId,
+        uid: currentUser.uid,
+        reason: firebaseConnectionError
+      };
     }
     isFirebaseConnected = false;
     firebaseConnectionError = err.message || String(err);

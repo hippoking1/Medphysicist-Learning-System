@@ -76,11 +76,29 @@ async function router() {
 // 監聽路由變化與網頁初始化
 window.addEventListener('hashchange', router);
 window.addEventListener('DOMContentLoaded', async () => {
-  // 初次啟動自動初始化 DB
   try {
     await DB.init();
   } catch (e) {
     console.warn('DB 初始失敗:', e);
+  }
+
+  if (typeof syncAuthUI === 'function') {
+    syncAuthUI();
+  }
+
+  if (typeof onAuthChanged === 'function') {
+    onAuthChanged(async (user) => {
+      try {
+        await DB.init();
+      } catch (e) {
+        console.warn('Auth 切換後 DB 同步失敗:', e);
+      }
+      if (typeof syncAuthUI === 'function') syncAuthUI();
+      router();
+      if (user) {
+        showToast(`已登入 Google 帳號：${user.email}`, 'success');
+      }
+    });
   }
 
   if (!window.location.hash) {

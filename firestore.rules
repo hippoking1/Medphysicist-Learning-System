@@ -1,0 +1,39 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isUser(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isLegacyOwner() {
+      return isSignedIn() && request.auth.token.email == 'hippoking1@gmail.com';
+    }
+
+    // 禁止任何寫入在 config/settings 夾帶 geminiApiKey 明文金鑰
+    function hasNoApiKey(col, docId) {
+      return !(col == 'config' && docId == 'settings' && ('geminiApiKey' in request.resource.data));
+    }
+
+    // 使用者專屬雲端空間（僅本人 Google UID 可讀寫）
+    match /users/{userId}/{collectionName}/{docId} {
+      allow read, delete: if isUser(userId);
+      allow create, update: if isUser(userId) && hasNoApiKey(collectionName, docId);
+    }
+
+    // v3.0 遺留頂層集合：僅限原擁有者登入後讀取搬移並刪除歷史明文金鑰
+    match /{legacyCollection}/{docId} {
+      allow read, delete: if legacyCollection in [
+        'config', 'syllabus', 'progress', 'questions',
+        'reviewCards', 'examResults', 'oralPractices', 'studyLogs'
+      ] && isLegacyOwner();
+      allow update: if legacyCollection == 'config'
+        && docId == 'settings'
+        && isLegacyOwner()
+        && !('geminiApiKey' in request.resource.data);
+    }
+  }
+}

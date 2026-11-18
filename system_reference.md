@@ -1,22 +1,29 @@
-# 醫學物理師考照自學系統 — 系統架構與設計文件 (System Reference v3.0)
+# 醫學物理師考照自學系統 — 系統架構與設計文件 (System Reference v3.5)
 
-本文件紀錄 **v3.0** 在 `/rightproblem-coach`、`/unslop` 與 `/ponytail` 審核後之架構設計、確定性繪圖引擎、Firebase 搬移機制與互動閉環。
+本文件紀錄 **v3.5** 在 `/rightproblem-coach`、`/unslop` 與 `/ponytail` 審核後之身分認證、資安零金鑰架構與互動模擬實驗室設計。
 
 ---
 
-## 1. 技術棧與檔案職責
+## 1. 技術棧與核心架構
 
-- **託管平台**：GitHub Pages（零編譯純靜態 HTML5 / CSS3 / Vanilla JS SPA）。
-- **資料庫**：Firebase Cloud Firestore（搭配 `enablePersistence` 離線快取），未配置時無縫降級至 `localStorage` (`mp_*`)。
-- **AI 引擎**：前端直連 Google Gemini REST API (`gemini-2.5-flash` 等)，具備 45 秒 `AbortController` 超時防護與 `repairJsonBackslashes` LaTeX 容錯修復。
-- **排版與公式**：`Inter` + `Noto Sans TC` + `JetBrains Mono` (`tabular-nums`)、MathJax 3 LaTeX 渲染。
+- **託管與部署注入**：GitHub Pages 搭配 `.github/workflows/deploy.yml`，於建置期自 GitHub Repository Secret (`FIREBASE_CONFIG`) 注入 `DEFAULT_FIREBASE_CONFIG`，確保 Git 原始碼零憑證。
+- **認證與資料庫隔離**：Firebase Authentication (Google OAuth Sign-in) 搭配 Cloud Firestore `/users/{uid}/...` 個人隔離空間與 `firestore.rules` 伺服器端強制校驗；未登入時自動降級至 `localStorage` (`mp_*`)，切換帳號時自動隔離/清理快取。
+- **Gemini AI 雙軌授權引擎**：
+  1. 優先採用 Google OAuth Access Token (`generative-language` scope，僅存 `sessionStorage`)。
+  2. 支援透過 Web Credential Management API (`PasswordCredential` + `<form autocomplete>`) 綁定 Google Email 自動帶入 API Key 至本機 `sessionStorage`，**絕不寫入 Firestore、LocalStorage 或 JSON 備份檔**。
+- **互動式醫學物理實驗室 (`js/diagrams.js`)**：採用單一事件委派引擎驅動全 16 種臨床與放射物理模擬器，支援即時參數滑桿、模式切換、`getScreenCTM()` 游標十字探針讀數與組件點擊檢視。
 
-### 模組職責
-- `index.html`：SPA 入口、雙主題前導腳本、8 大頁面 `<template>` 與 6 組原生 `<dialog>`。
-- `css/style.css`：Ink Dark (`#0d1017`) 與 Warm Paper (`#f7f4ee`) 雙主題設計系統，採 4px 網格與平面實色階層。
-- `js/firebase-config.js`：`parseFirebaseConfigInput` 整段貼上拆解與 `verifyFirebaseConnection` 伺服器實測探針。
-- `js/db.js`：Firestore/LocalStorage 雙模 DAO、`syncToFirestore` 400 筆分批寫入引擎、`pushLocalToFirebase`、`pullFirebaseToLocal`、`migrateFromGoogleSheet`、全 10 模組模擬考組卷與歷史明細儲存。
-- `js/diagrams.js`：確定性醫學物理繪圖引擎，包含 `PhysicsPlotter` (200 點公式取樣曲線) 與 `ClinicalBlueprints` (工程級幾何藍圖) 及舊式 SVG 色彩正規化。
-- `js/charts.js`：動態讀取 CSS 變數繪製圓環進度圖、7 日學習折線圖與 **M1~M10 10 軸雷達圖**。
+---
+
+## 2. 模組職責
+
+- `firebase.json` & `firestore.rules`：宣告式 Firestore 安全規則，鎖定 `request.auth.uid == userId`、伺服器端禁止於 `config/settings` 寫入 `geminiApiKey`，並支援原擁有者讀取遷移 v3.0 頂層集合。
+- `index.html`：SPA 入口、Firebase Auth/Firestore Compat SDK、側邊欄 Google 帳號卡與系統設定雙軌授權介面。
+- `css/style.css`：Ink Dark (`#0d1017`) 與 Warm Paper (`#f7f4ee`) 雙主題設計系統、4px 網格與 `.mp-lab` 實驗室讀數列樣式。
+- `js/firebase-config.js`：`signInWithGoogle`、`authorizeGeminiOAuth`、`signOutGoogle`、`waitForInitialAuth`、`onAuthChanged` 及伺服器實測探針。
+- `js/db.js`：`/users/{uid}` 雙模 DAO、v3.0 舊版頂層資料自動上雲遷移、`FieldValue.delete()` 歷史明文金鑰自動銷毀、`PasswordCredential` 本機存取與全 10 模組模擬考組卷。
+- `js/gemini.js`：`_fetchWithAuth` 雙軌認證（OAuth Bearer Token + Session API Key 自動降級容錯）與 45–150 秒 `AbortController` 超時防護。
+- `js/diagrams.js`：16 座互動式醫學物理模擬實驗室 (`_LAB_BUILDERS`)、0-Token NotebookLM 公式保護型 Markdown 解析器與舊式 SVG 色階正規化。
+- `js/charts.js`：動態讀取 CSS 變數繪製圓環進度圖、7 日學習折線圖與 M1~M10 10 軸雷達圖。
 - `js/timer.js`：基於 `Date.now()` 時間戳差值與 `sessionStorage` 之防背景節流計時器。
-- `js/app.js` & `js/router.js`：8 大頁面控制器、題庫互動盲測與一鍵轉 SM-2 閃卡閉環。
+- `js/app.js` & `js/router.js`：8 大頁面控制器、`syncAuthUI` 狀態同步、Auth 切換自動重整視圖與題庫/閃卡閉環。
