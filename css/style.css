@@ -1142,6 +1142,11 @@ dialog.modal-dialog::backdrop {
   user-select: none;
 }
 
+.mp-lab-stage [data-part] {
+  cursor: pointer;
+  pointer-events: all;
+}
+
 .mp-lab-inspector {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);

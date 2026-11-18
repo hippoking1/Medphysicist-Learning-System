@@ -1814,7 +1814,7 @@ const Diagrams = {
           ${isFF
             ? `<polygon points="250,108 214,132 286,132" fill="var(--accent)" opacity="0.85" ${sel('filter_foil')}/><text x="296" y="125" fill="var(--accent)" font-size="10.5">Flattening Filter (整平濾器)</text>`
             : (mode === 'photon_fff'
-              ? `<rect x="218" y="114" width="64" height="14" fill="none" stroke-dasharray="4 3" ${sel('filter_foil')}/><text x="296" y="125" fill="var(--warning)" font-size="10.5">FFF Open Port (濾器移開)</text>`
+              ? `<rect x="218" y="114" width="64" height="14" fill="transparent" stroke-dasharray="4 3" ${sel('filter_foil')}/><text x="296" y="125" fill="var(--warning)" font-size="10.5">FFF Open Port (濾器移開)</text>`
               : `<line x1="215" y1="120" x2="285" y2="120" stroke="var(--success)" stroke-width="4"/><rect x="212" y="114" width="76" height="12" fill="transparent" ${sel('filter_foil')}/><text x="296" y="124" fill="var(--success)" font-size="10.5">Scattering Foil (散射箔)</text>`)
           }
         </g>
