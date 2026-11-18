@@ -350,7 +350,21 @@ const Diagrams = {
   },
 
   _escapeAttr(str) {
-    return String(str).replace(/&/g, '&amp;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  },
+
+  _readLabState(labEl, attr = 'data-lab-state') {
+    const type = labEl.getAttribute('data-lab-type');
+    try {
+      const raw = labEl.getAttribute(attr);
+      if (raw) return JSON.parse(raw);
+    } catch (e) {}
+    return this._getDefaultState(type);
   },
 
   _renderReadoutsHtml(readouts = []) {
@@ -434,7 +448,7 @@ const Diagrams = {
           const slider = e.target.closest('input.mp-lab-slider[data-param]');
           if (!slider) return;
           e.stopPropagation();
-          const state = JSON.parse(labEl.getAttribute('data-lab-state'));
+          const state = this._readLabState(labEl);
           state[slider.getAttribute('data-param')] = Number(slider.value);
           this._patchLab(labEl, state, slider.getAttribute('data-param'));
         });
@@ -444,12 +458,13 @@ const Diagrams = {
           if (!btn) return;
           e.stopPropagation();
           const kind = btn.getAttribute('data-kind');
-          const state = JSON.parse(labEl.getAttribute('data-lab-state'));
+          const state = this._readLabState(labEl);
 
           if (kind === 'choice') {
             const p = btn.getAttribute('data-param');
             const v = btn.getAttribute('data-value');
-            state[p] = v === 'true' ? true : (v === 'false' ? false : (!isNaN(Number(v)) && v !== '' && !/^[a-zA-Z]/.test(v) ? Number(v) : v));
+            const num = Number(v);
+            state[p] = v === 'true' ? true : (v === 'false' ? false : (v !== '' && Number.isFinite(num) ? num : v));
             this._applyLabPresetSideEffects(labEl.getAttribute('data-lab-type'), p, state);
           } else if (kind === 'multichoice') {
             const p = btn.getAttribute('data-param');
@@ -473,7 +488,7 @@ const Diagrams = {
       if (btnReset) {
         btnReset.addEventListener('click', (e) => {
           e.stopPropagation();
-          const defState = JSON.parse(labEl.getAttribute('data-lab-default'));
+          const defState = this._readLabState(labEl, 'data-lab-default');
           this._patchLab(labEl, defState);
         });
       }
@@ -506,7 +521,7 @@ const Diagrams = {
 
           const rx = Math.max(0, Math.min(1, (loc.x - pxMin) / (pxMax - pxMin)));
           const valX = xMin + rx * (xMax - xMin);
-          const state = JSON.parse(labEl.getAttribute('data-lab-state'));
+          const state = this._readLabState(labEl);
 
           if (mode === 'x') {
             const xKey = svg.getAttribute('data-x-key');
@@ -536,7 +551,7 @@ const Diagrams = {
           e.stopPropagation();
           const partEl = e.target.closest('[data-part]');
           if (partEl) {
-            const state = JSON.parse(labEl.getAttribute('data-lab-state'));
+            const state = this._readLabState(labEl);
             const partKey = partEl.getAttribute('data-part-key') || 'selectedPart';
             state[partKey] = partEl.getAttribute('data-part');
             this._patchLab(labEl, state);
@@ -642,7 +657,12 @@ const Diagrams = {
         if (valSpan) valSpan.textContent = `${disp}${ctrl.unit ? ` ${ctrl.unit}` : ''}`;
         if (activeSliderParam !== ctrl.param) {
           const inp = labEl.querySelector(`input.mp-lab-slider[data-param="${ctrl.param}"]`);
-          if (inp) inp.value = String(val);
+          if (inp) {
+            inp.min = String(ctrl.min);
+            inp.max = String(ctrl.max);
+            inp.step = String(ctrl.step);
+            inp.value = String(val);
+          }
         }
       } else if (ctrl.kind === 'choice' || ctrl.kind === 'multichoice') {
         const cur = state[ctrl.param];
@@ -656,6 +676,9 @@ const Diagrams = {
       } else if (ctrl.kind === 'toggle') {
         const btn = labEl.querySelector(`button[data-kind="toggle"][data-param="${ctrl.param}"]`);
         if (btn) btn.classList.toggle('active', Boolean(state[ctrl.param]));
+      } else if (ctrl.kind === 'action') {
+        const btn = labEl.querySelector(`button[data-kind="action"][data-action="${ctrl.action}"]`);
+        if (btn) btn.textContent = ctrl.label;
       }
     });
   },
@@ -1036,7 +1059,7 @@ const Diagrams = {
       }
 
       const controls = [
-        { kind: 'range', param: 'probeD', label: '深度探針 d (或直接拖曳圖面)', min: 0, max: 30, step: 0.5, unit: 'cm', format: (v) => v.toFixed(1) },
+        { kind: 'range', param: 'probeD', label: '深度探針 d (可拖曳圖面)', min: 0, max: 30, step: 0.5, unit: 'cm', format: (v) => v.toFixed(1) },
         { kind: 'range', param: 'eElectron', label: '電子能量 E₀', min: 6, max: 20, step: 1, unit: 'MeV', format: (v) => String(Math.round(v)) },
         {
           kind: 'multichoice',
@@ -1677,7 +1700,7 @@ const Diagrams = {
           { label: 'μ / 1 TVL', value: `${mu.toFixed(3)} cm⁻¹ / ${tvl.toFixed(1)} cm`, tone: 'warning' }
         ],
         controls: [
-          { kind: 'range', param: 'probeX', label: '厚度探針 x', min: 0, max: 20, step: 0.25, unit: 'cm', format: (v) => Math.min(v, maxX).toFixed(2) },
+          { kind: 'range', param: 'probeX', label: '厚度探針 x', min: 0, max: Number(maxX.toFixed(2)), step: 0.2, unit: 'cm', format: (v) => Math.min(v, maxX).toFixed(2) },
           { kind: 'range', param: 'hvl1', label: '第一半值層 HVL₁', min: 1.0, max: 5.0, step: 0.2, unit: 'cm', format: (v) => v.toFixed(1) },
           { kind: 'range', param: 'buildup', label: '寬射束散射增建係數', min: 0, max: 0.8, step: 0.05, format: (v) => v.toFixed(2) },
           { kind: 'range', param: 'hardening', label: '能譜硬化程度', min: 0, max: 0.35, step: 0.05, format: (v) => `${Math.round(v * 100)}%` }

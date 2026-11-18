@@ -1059,6 +1059,7 @@ dialog.modal-dialog::backdrop {
   justify-content: space-between;
   align-items: center;
   gap: 8px;
+  user-select: none;
 }
 
 .mp-lab-badge {
@@ -1154,19 +1155,20 @@ dialog.modal-dialog::backdrop {
 
 .mp-lab-controls {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   gap: 10px;
   padding: 10px 12px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 8px;
+  user-select: none;
 }
 
 .mp-lab-ctrl {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  justify-content: center;
+  justify-content: space-between;
 }
 
 .mp-lab-ctrl-wide {
@@ -1189,6 +1191,8 @@ dialog.modal-dialog::backdrop {
 .mp-lab-val {
   color: var(--accent);
   font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .mp-lab-slider {
