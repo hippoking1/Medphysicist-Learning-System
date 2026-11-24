@@ -8,7 +8,8 @@
 # Local user backups
 *backup*.json
 
-# OS / Editor
+# Build staging & OS / Editor
+_site/
 .DS_Store
 Thumbs.db
 .vscode/

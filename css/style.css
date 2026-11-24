@@ -1,7 +1,15 @@
-/* 醫學物理師考照自學系統 - 臨床劑量儀雙主題樣式表 (Ink Dark & Warm Paper Light) */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;600&display=swap');
+/* 醫學物理師考照自學系統 v4.0 - 臨床劑量儀雙主題樣式表 (Ink Dark & Warm Paper Light) */
 
 :root {
+  color-scheme: light dark;
+
+  &:has(> head > meta[name='color-scheme'][content='dark']) {
+    color-scheme: dark;
+  }
+  &:has(> head > meta[name='color-scheme'][content='light']) {
+    color-scheme: light;
+  }
+
   /* Ink Dark (預設：臨床劑量儀深色模式) */
   --bg-sidebar: #090b10;
   --bg-primary: #0d1017;
@@ -31,12 +39,17 @@
 
   --chart-grid: rgba(238, 240, 245, 0.07);
   --chart-track: #1a202c;
+  --scrollbar-thumb: #4b5568;
+  --scrollbar-track: #0d1017;
 
-  --font-sans: 'Inter', 'Noto Sans TC', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-sans: 'IBM Plex Sans', 'Noto Sans TC', -apple-system, BlinkMacSystemFont, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.28);
   --shadow-md: 0 12px 32px rgba(0, 0, 0, 0.45);
+
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
 
 [data-theme='light'] {
@@ -69,6 +82,8 @@
 
   --chart-grid: rgba(28, 25, 23, 0.07);
   --chart-track: #e6e0d4;
+  --scrollbar-thumb: #9c9489;
+  --scrollbar-track: #f0ece3;
 
   --shadow-sm: 0 1px 2px rgba(28, 25, 23, 0.05);
   --shadow-md: 0 10px 28px rgba(28, 25, 23, 0.12);
@@ -91,26 +106,69 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* 固定圖示佔位框，避免字體載入前出現英文連字偏移 (CLS) */
+.material-icons-round {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  overflow: hidden;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
 /* 等寬數據與簽名標記線 */
 .mono-num {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
 
-/* 滾動條 */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+/* 4px 網格共用工具類別 */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
-::-webkit-scrollbar-track {
-  background: var(--bg-primary);
-}
-::-webkit-scrollbar-thumb {
-  background: var(--bg-raised);
-  border-radius: 4px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--text-dark);
+.flex-row { display: flex; align-items: center; }
+.flex-wrap { flex-wrap: wrap; }
+.stack-col { display: flex; flex-direction: column; }
+.gap-6 { gap: 6px; }
+.gap-8 { gap: 8px; }
+.gap-10 { gap: 10px; }
+.gap-12 { gap: 12px; }
+.w-full { width: 100%; }
+.section-gap { margin-bottom: 24px; }
+.text-muted { color: var(--text-muted); }
+.text-dark { color: var(--text-dark); }
+.empty-hint { color: var(--text-muted); font-size: 13px; text-align: center; padding: 24px 0; }
+.guide-divider { border: none; border-top: 1px solid var(--border-color); margin: 16px 0; }
+.brand-icon-sm { width: 26px; height: 26px; font-size: 11px; }
+.card-header-flat { border: none; padding: 0; margin-bottom: 8px; }
+
+/* 捲軸降級支援 (僅在不支援標準 scrollbar-color 之舊版 WebKit 啟用) */
+@supports not (scrollbar-color: auto) {
+  :root {
+    scrollbar-width: auto;
+  }
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--scrollbar-track);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+  }
 }
 
 /* 全局版面配置 */
@@ -679,7 +737,7 @@ select option {
   color: #ffffff;
 }
 
-/* 原生 HTML5 <dialog> 彈出視窗 */
+/* 原生 HTML5 <dialog> 彈出視窗 + Top-Layer @starting-style 過渡 */
 dialog.modal-dialog {
   border: none;
   background: transparent;
@@ -689,11 +747,67 @@ dialog.modal-dialog {
   width: calc(100% - 32px);
   outline: none;
   color: var(--text-main);
+  opacity: 0;
+  transition-property: opacity, transform, display, overlay;
+  transition-duration: 0.22s;
+  transition-timing-function: var(--ease-out);
+  transition-behavior: allow-discrete;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  dialog.modal-dialog {
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+dialog.modal-dialog[open] {
+  opacity: 1;
+}
+
+@starting-style {
+  dialog.modal-dialog[open] {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  dialog.modal-dialog[open] {
+    transform: translateY(0) scale(1);
+  }
+  @starting-style {
+    dialog.modal-dialog[open] {
+      transform: translateY(8px) scale(0.98);
+    }
+  }
 }
 
 dialog.modal-dialog::backdrop {
+  background: rgba(9, 11, 16, 0);
+  backdrop-filter: blur(0px);
+  transition-property: background-color, backdrop-filter, display, overlay;
+  transition-duration: 0.22s;
+  transition-timing-function: var(--ease-out);
+  transition-behavior: allow-discrete;
+}
+
+dialog.modal-dialog[open]::backdrop {
   background: rgba(9, 11, 16, 0.72);
   backdrop-filter: blur(4px);
+}
+
+@starting-style {
+  dialog.modal-dialog[open]::backdrop {
+    background: rgba(9, 11, 16, 0);
+    backdrop-filter: blur(0px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  dialog.modal-dialog,
+  dialog.modal-dialog::backdrop,
+  .toast {
+    transition-duration: 0.08s;
+  }
 }
 
 .modal-content {
@@ -778,7 +892,7 @@ dialog.modal-dialog::backdrop {
   font-size: 13px;
 }
 
-/* 浮動學習計時器 */
+/* 可拖曳浮動學習計時器 */
 .floating-timer {
   position: fixed;
   bottom: 24px;
@@ -790,9 +904,34 @@ dialog.modal-dialog::backdrop {
   padding: 10px 14px;
   display: none;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   box-shadow: var(--shadow-md);
   z-index: 500;
+  touch-action: none;
+}
+
+.timer-drag-grip {
+  font-size: 16px;
+  color: var(--text-dark);
+  cursor: grab;
+  user-select: none;
+}
+
+.timer-drag-grip:active {
+  cursor: grabbing;
+}
+
+.timer-meta {
+  min-width: 0;
+}
+
+.timer-unit-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  max-width: 180px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .timer-time {
@@ -803,30 +942,70 @@ dialog.modal-dialog::backdrop {
   color: var(--text-main);
 }
 
-/* Toast 通知 */
+/* Top-Layer Toast 通知 (popover="manual") */
 .toast {
   position: fixed;
-  bottom: 24px;
-  left: 50%;
-  transform: translateX(-50%) translateY(90px);
+  inset: auto auto 24px 50%;
+  margin: 0;
+  transform: translateX(-50%) translateY(12px);
+  opacity: 0;
   background: var(--bg-raised);
   border: 1px solid var(--border-strong);
   border-left: 3px solid var(--accent);
-  padding: 10px 18px;
+  padding: 10px 14px 10px 16px;
   border-radius: 8px;
   box-shadow: var(--shadow-md);
   color: var(--text-main);
   z-index: 2000;
-  transition: transform 0.22s var(--ease-out);
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 13px;
-  pointer-events: none;
+  max-width: min(520px, calc(100vw - 32px));
+  transition-property: opacity, transform, display, overlay;
+  transition-duration: 0.2s;
+  transition-timing-function: var(--ease-out);
+  transition-behavior: allow-discrete;
 }
 
+.toast:not(:popover-open):not(.show) {
+  display: none;
+}
+
+.toast:popover-open,
 .toast.show {
+  display: flex;
+  opacity: 1;
   transform: translateX(-50%) translateY(0);
+}
+
+@starting-style {
+  .toast:popover-open,
+  .toast.show {
+    opacity: 0;
+    transform: translateX(-50%) translateY(12px);
+  }
+}
+
+.toast .material-icons-round {
+  font-size: 18px;
+}
+
+.toast-close {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 4px;
+  margin-left: 4px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.toast-close:hover {
+  color: var(--text-main);
+  background: var(--bg-tertiary);
 }
 
 .toast.success {
@@ -1063,14 +1242,25 @@ dialog.modal-dialog::backdrop {
 }
 
 .mp-lab-badge {
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: var(--accent);
-  background: var(--accent-subtle);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   padding: 2px 8px;
   border-radius: 4px;
+}
+
+.mp-lab-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  display: inline-block;
+  flex-shrink: 0;
 }
 
 .mp-lab-reset {
@@ -1506,8 +1696,384 @@ dialog.modal-dialog::backdrop {
   background: var(--bg-primary);
 }
 
+/* ========================================== */
+/* v4.0 新增：側邊欄快速搜尋、命令面板、首屏焦點卡、課綱檢索與長清單延遲渲染 */
+/* ========================================== */
+
+.cmd-trigger-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 36px;
+  padding: 0 12px;
+  margin-bottom: 16px;
+  border-radius: 8px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.16s var(--ease-out), color 0.16s var(--ease-out), background-color 0.16s var(--ease-out);
+}
+
+.cmd-trigger-btn:hover {
+  border-color: var(--border-strong);
+  color: var(--text-main);
+  background: var(--bg-secondary);
+}
+
+.cmd-dialog {
+  max-width: 600px;
+}
+
+.cmd-modal-content {
+  padding: 0;
+  overflow: hidden;
+}
+
+.cmd-search-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.cmd-input {
+  flex: 1;
+  background: transparent !important;
+  border: none !important;
+  padding: 4px 0 !important;
+  font-size: 14px;
+  color: var(--text-main);
+  outline: none;
+}
+
+.cmd-results {
+  max-height: 360px;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cmd-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-main);
+  text-align: left;
+  width: 100%;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background-color 0.12s var(--ease-out), border-color 0.12s var(--ease-out);
+}
+
+.cmd-item:hover,
+.cmd-item.active {
+  background: var(--bg-tertiary);
+  border-color: var(--border-strong);
+}
+
+.cmd-item-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.cmd-item-title {
+  font-size: 13.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cmd-item-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cmd-footer {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+/* 儀表板今日研讀焦點英雄卡 */
+.dash-focus-hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 24px;
+  margin-bottom: 24px;
+  border-left: 3px solid var(--accent);
+}
+
+.dash-focus-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.dash-focus-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--accent);
+  font-weight: 500;
+  margin-bottom: 6px;
+}
+
+.dash-focus-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-main);
+  line-height: 1.3;
+  margin-bottom: 6px;
+}
+
+.dash-focus-meta {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.dash-focus-desc {
+  font-size: 13px;
+  color: var(--text-dark);
+}
+
+.dash-focus-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex-shrink: 0;
+  min-width: 172px;
+}
+
+/* 儀表板 37 單元狀態條與弱點模組卡 */
+.dash-status-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 300px;
+}
+
+.status-stacked-bar {
+  display: flex;
+  width: 100%;
+  height: 10px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg-tertiary);
+  gap: 2px;
+  margin-bottom: 12px;
+}
+
+.status-seg {
+  height: 100%;
+  min-width: 0;
+}
+
+.status-legend-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.status-legend-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 6px;
+}
+
+.dash-weak-section {
+  border-top: 1px solid var(--border-color);
+  padding-top: 12px;
+}
+
+.dash-weak-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.dash-weak-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dash-weak-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12.5px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+}
+
+.dash-chart-card {
+  height: 300px;
+  display: flex;
+  flex-direction: column;
+}
+
+.chart-canvas-wrap {
+  width: 100%;
+  flex: 1;
+  min-height: 220px;
+  position: relative;
+}
+
+.chart-canvas-fill {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.dash-module-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dash-module-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  margin: 0 -8px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.14s var(--ease-out);
+}
+
+.dash-module-row:hover {
+  background: var(--bg-tertiary);
+}
+
+.dash-quick-actions {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+}
+
+/* 課綱即時搜尋與狀態列 */
+.syllabus-filter-bar {
+  margin-bottom: 16px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.syllabus-search-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.search-input-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 240px;
+}
+
+.search-input-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 18px;
+  color: var(--text-dark);
+  pointer-events: none;
+}
+
+.search-input {
+  padding-left: 34px !important;
+}
+
+/* 模擬考頁首與待查標記 */
+.exam-q-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 12px;
+  margin-bottom: 16px;
+}
+
+.exam-kbd-hints {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--text-dark);
+}
+
+.exam-nav-btn.flagged {
+  box-shadow: inset 0 -2px 0 var(--warning);
+}
+
+/* 延遲渲染視窗外長清單 (僅套用於首屏以後項目，避免影響首屏 LCP) */
+.unit-card:nth-child(n + 8),
+#questions-list-container > .sub-card:nth-child(n + 8) {
+  content-visibility: auto;
+  contain-intrinsic-size: auto none auto 152px;
+}
+
 /* 響應式斷點 */
 @media (max-width: 1024px) {
+  .dash-focus-hero {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .dash-focus-actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
   .grid-cols-3,
   .grid-cols-4,
   .study-workspace-grid {
@@ -1523,6 +2089,9 @@ dialog.modal-dialog::backdrop {
 }
 
 @media (max-width: 768px) {
+  .exam-kbd-hints {
+    display: none;
+  }
   .mobile-header {
     display: flex;
   }

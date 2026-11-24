@@ -1,12 +1,207 @@
 /**
- * 醫學物理師考照自學系統 - 互動式醫學物理模擬實驗室引擎 (js/diagrams.js)
- * 涵蓋 16 種臨床與放射物理確定性公式模擬器：
+ * 醫學物理師考照自學系統 - 互動式醫學物理模擬實驗室引擎與 SafeHTML 淨化器 (js/diagrams.js)
+ * 涵蓋 16 種臨床與放射物理確定性公式模擬器 + DOM 白名單 XSS 防護層：
+ * - SafeHTML：DOMParser 惰性解析 + 嚴格白名單節點重建，防範剪貼簿 / JSON / AI 回傳之 Stored & DOM XSS
  * - 即時參數滑桿 & 雙主題自適應 SVG 重繪
  * - 支援滑鼠/觸控十字探針讀數 (getScreenCTM) 與機件點擊檢視
  * - 相容 NotebookLM 0-Token [[DIAGRAM:type]] 標記與舊式 SVG 正規化
  */
 
+const SafeHTML = {
+  HTML_TAGS: new Set([
+    'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'div', 'span', 'br', 'hr',
+    'ul', 'ol', 'li', 'strong', 'b', 'em', 'i', 'sub', 'sup', 'code', 'pre',
+    'blockquote', 'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td', 'a'
+  ]),
+  SVG_TAGS: new Set([
+    'svg', 'g', 'path', 'line', 'rect', 'circle', 'ellipse', 'polygon',
+    'polyline', 'text', 'tspan', 'defs', 'marker', 'title'
+  ]),
+  DROP_WITH_CONTENT: new Set([
+    'script', 'style', 'iframe', 'object', 'embed', 'applet', 'form',
+    'input', 'textarea', 'select', 'button', 'meta', 'link', 'base',
+    'foreignobject', 'animate', 'animatetransform', 'set', 'use', 'image'
+  ]),
+  HTML_ATTRS: new Set(['class', 'title', 'colspan', 'rowspan', 'scope', 'dir', 'lang']),
+  SVG_ATTRS: new Set([
+    'viewbox', 'width', 'height', 'xmlns', 'role', 'class',
+    'x', 'y', 'x1', 'y1', 'x2', 'y2', 'cx', 'cy', 'r', 'rx', 'ry',
+    'd', 'points', 'fill', 'stroke', 'stroke-width', 'stroke-dasharray',
+    'stroke-linecap', 'stroke-linejoin', 'opacity', 'fill-opacity', 'stroke-opacity',
+    'text-anchor', 'dominant-baseline', 'font-size', 'font-weight', 'font-family',
+    'transform', 'id', 'refx', 'refy', 'markerwidth', 'markerheight', 'orient',
+    'marker-end', 'marker-start'
+  ]),
+
+  escape(str) {
+    return String(str ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  },
+
+  safeUrl(rawUrl, allowHash = false) {
+    const val = String(rawUrl || '').trim();
+    if (!val) return '';
+    if (allowHash && val.startsWith('#')) return val;
+    try {
+      const parsed = new URL(val, 'https://example.invalid');
+      if (parsed.protocol === 'https:' || parsed.protocol === 'mailto:') {
+        return val;
+      }
+      if (parsed.protocol === 'http:' && (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1')) {
+        return val;
+      }
+    } catch (e) {}
+    return '';
+  },
+
+  _validateDiagramSpec(rawSpec) {
+    try {
+      const parsed = JSON.parse(rawSpec);
+      if (!parsed || typeof parsed !== 'object' || typeof parsed.type !== 'string') return null;
+      if (typeof Diagrams !== 'undefined' && Diagrams.DIAGRAM_CATALOG && !Diagrams.DIAGRAM_CATALOG[parsed.type]) {
+        return null;
+      }
+      return JSON.stringify({
+        type: parsed.type,
+        params: parsed.params && typeof parsed.params === 'object' ? parsed.params : {}
+      });
+    } catch (e) {
+      return null;
+    }
+  },
+
+  _sanitizeDomNode(node, doc) {
+    if (node.nodeType === 3) {
+      return doc.createTextNode(node.nodeValue || '');
+    }
+    if (node.nodeType !== 1) return null;
+
+    const tag = node.tagName.toLowerCase();
+    if (this.DROP_WITH_CONTENT.has(tag)) return null;
+
+    const isSvg = this.SVG_TAGS.has(tag);
+    const isHtml = this.HTML_TAGS.has(tag);
+    if (!isHtml && !isSvg) {
+      const frag = doc.createDocumentFragment();
+      Array.from(node.childNodes).forEach((child) => {
+        const cleanChild = this._sanitizeDomNode(child, doc);
+        if (cleanChild) frag.appendChild(cleanChild);
+      });
+      return frag;
+    }
+
+    const cleanEl = isSvg
+      ? doc.createElementNS('http://www.w3.org/2000/svg', tag)
+      : doc.createElement(tag);
+
+    Array.from(node.attributes).forEach((attr) => {
+      const name = attr.name.toLowerCase();
+      const value = attr.value || '';
+      if (name.startsWith('on') || name === 'style' || name === 'srcdoc') return;
+
+      if (tag === 'a' && name === 'href') {
+        const safeHref = this.safeUrl(value, true);
+        if (safeHref) {
+          cleanEl.setAttribute('href', safeHref);
+          if (!safeHref.startsWith('#')) {
+            cleanEl.setAttribute('target', '_blank');
+            cleanEl.setAttribute('rel', 'noopener noreferrer');
+          }
+        }
+        return;
+      }
+
+      if ((tag === 'div' || tag === 'span') && name === 'data-spec') {
+        const validated = this._validateDiagramSpec(value);
+        if (validated) cleanEl.setAttribute('data-spec', validated);
+        return;
+      }
+
+      if (isSvg) {
+        if (!this.SVG_ATTRS.has(name)) return;
+        if ((name === 'marker-end' || name === 'marker-start') && !/^url\(#mp-[a-z0-9_-]+\)$/i.test(value.trim())) {
+          return;
+        }
+        if (/javascript:|data:|expression\s*\(/i.test(value)) return;
+        cleanEl.setAttribute(attr.name, value);
+      } else if (this.HTML_ATTRS.has(name)) {
+        if (name === 'class') {
+          const safeClass = value.replace(/[^a-zA-Z0-9_\-\s]/g, '').trim();
+          if (safeClass) cleanEl.setAttribute('class', safeClass);
+        } else {
+          cleanEl.setAttribute(name, value);
+        }
+      }
+    });
+
+    Array.from(node.childNodes).forEach((child) => {
+      const cleanChild = this._sanitizeDomNode(child, doc);
+      if (cleanChild) cleanEl.appendChild(cleanChild);
+    });
+    return cleanEl;
+  },
+
+  sanitizeFragment(rawHtml) {
+    const html = String(rawHtml ?? '');
+    const doc = document;
+    const frag = doc.createDocumentFragment();
+    if (!html.trim()) return frag;
+
+    const parser = new DOMParser();
+    const parsed = parser.parseFromString(html, 'text/html');
+    Array.from(parsed.body.childNodes).forEach((node) => {
+      const clean = this._sanitizeDomNode(node, doc);
+      if (clean) frag.appendChild(clean);
+    });
+    return frag;
+  },
+
+  sanitizeHtml(rawHtml) {
+    const html = String(rawHtml ?? '');
+    if (!html.trim()) return '';
+    if (typeof DOMParser !== 'undefined' && typeof document !== 'undefined') {
+      const wrap = document.createElement('div');
+      wrap.appendChild(this.sanitizeFragment(html));
+      return wrap.innerHTML;
+    }
+    // 非瀏覽器環境 (Node 自檢) 之降級靜態白名單淨化
+    return html
+      .replace(/<(script|style|iframe|object|embed|foreignObject|applet|form|meta|link|base)\b[\s\S]*?<\/\1>/gi, '')
+      .replace(/<(script|style|iframe|object|embed|foreignObject|applet|form|input|textarea|button|meta|link|base|img|use|image|animate|set)\b[^>]*\/?>/gi, '')
+      .replace(/\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+      .replace(/\s+(?:href|src|xlink:href)\s*=\s*(?:"\s*(?:javascript|vbscript|data):[^"]*"|'\s*(?:javascript|vbscript|data):[^']*')/gi, '');
+  },
+
+  set(el, rawHtml, options = {}) {
+    if (!el) return;
+    const html = String(rawHtml ?? '');
+    if (!html.trim()) {
+      el.replaceChildren();
+      return;
+    }
+    if (options.trusted === true) {
+      el.innerHTML = html;
+      return;
+    }
+    if (options.plainText === true) {
+      el.textContent = html;
+      return;
+    }
+    if (typeof DOMParser !== 'undefined') {
+      const frag = this.sanitizeFragment(html);
+      el.replaceChildren(frag);
+      return;
+    }
+    el.innerHTML = this.sanitizeHtml(html);
+  }
+};
+
 const Diagrams = {
+  SafeHTML,
   _uidCounter: 0,
 
   DIAGRAM_CATALOG: {
@@ -190,7 +385,7 @@ const Diagrams = {
     }],
     'U4.2.1': [{
       title: '相鄰照野發散銜接與表面間隙 (Gap) 模擬器',
-      caption: '刻意將實際 Gap 設小於理想 ΔG，即時觀察深度 d 上方產生的紅色重疊熱點區！',
+      caption: '刻意將實際 Gap 設小於理想 ΔG，即時觀察深度 d 上方產生的紅色重疊熱點區。',
       spec: { type: 'field_matching', params: { l1: 20, l2: 20, ssd: 100, d: 10, actualGap: 2.0 } }
     }],
     'U5.1.2': [{
@@ -338,7 +533,7 @@ const Diagrams = {
     return `
       <div class="mp-lab" data-lab-type="${type}" data-lab-state="${escapedDefault}" data-lab-default="${escapedDefault}">
         <div class="mp-lab-toolbar">
-          <span class="mp-lab-badge mono-num">INTERACTIVE LAB</span>
+          <span class="mp-lab-badge"><span class="mp-lab-dot" aria-hidden="true"></span>互動物理模擬</span>
           <button type="button" class="mp-lab-reset" title="重設為標準預設參數">重設參數</button>
         </div>
         <div class="mp-lab-readouts">${this._renderReadoutsHtml(lab.readouts)}</div>
@@ -743,9 +938,11 @@ const Diagrams = {
     const looksLikeHtml = /<(h[1-4]|table|ul|ol|p|div)\b/i.test(text) && !/^#{1,4}\s/m.test(text);
     let htmlOut = text;
 
-    if (!looksLikeHtml) {
+    if (looksLikeHtml) {
+      htmlOut = SafeHTML.sanitizeHtml(htmlOut);
+    } else {
       const formatInline = (str) =>
-        str
+        SafeHTML.escape(str)
           .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
           .replace(/\*([^*\n]+?)\*/g, '<em>$1</em>')
           .replace(/`([^`]+)`/g, '<code>$1</code>');
@@ -765,7 +962,7 @@ const Diagrams = {
           const codeLines = [];
           i++;
           while (i < lines.length && !lines[i].trim().startsWith('```')) {
-            codeLines.push(lines[i]);
+            codeLines.push(SafeHTML.escape(lines[i]));
             i++;
           }
           i++;
@@ -798,7 +995,7 @@ const Diagrams = {
         }
 
         if (/^(-{3,}|\*{3,})$/.test(trimmed)) {
-          out.push('<hr style="border: none; border-top: 1px solid var(--border-color); margin: 14px 0;">');
+          out.push('<hr class="guide-divider">');
           i++;
           continue;
         }
@@ -833,8 +1030,8 @@ const Diagrams = {
           continue;
         }
 
-        if (/^<(h[1-6]|div|table|ul|ol|p|blockquote|hr)/i.test(trimmed)) {
-          out.push(line);
+        if (/^<(h[1-6]|div|table|ul|ol|p|blockquote|hr)\b/i.test(trimmed)) {
+          out.push(SafeHTML.sanitizeHtml(line));
           i++;
           continue;
         }

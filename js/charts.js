@@ -13,6 +13,7 @@ const Charts = {
       textMain: val('--text-main', '#eef0f5'),
       textMuted: val('--text-muted', '#9aa3b8'),
       textDark: val('--text-dark', '#6e778c'),
+      warning: val('--warning', '#f59e0b'),
       bgPrimary: val('--bg-primary', '#0d1017'),
       track: val('--chart-track', '#1a202c'),
       grid: val('--chart-grid', 'rgba(238, 240, 245, 0.07)')
@@ -69,14 +70,14 @@ const Charts = {
     ctx.fillText(`${percent}%`, cx, cy - 6);
 
     ctx.fillStyle = t.textMuted;
-    ctx.font = '400 12px "Inter", "Noto Sans TC", sans-serif';
+    ctx.font = '400 12px "IBM Plex Sans", "Noto Sans TC", sans-serif';
     ctx.fillText(labelText, cx, cy + 16);
   },
 
   /**
-   * 繪製學習時數折線圖 (Line Trend Chart)
+   * 繪製學習時數折線圖 (Line Trend Chart，支援每日目標參考虛線)
    */
-  drawLine(canvasId, dataPoints) {
+  drawLine(canvasId, dataPoints, goalMinutes = 0) {
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
     const t = this._getThemeTokens();
@@ -96,7 +97,8 @@ const Charts = {
     const padding = { top: 20, right: 20, bottom: 32, left: 42 };
     const chartWidth = w - padding.left - padding.right;
     const chartHeight = h - padding.top - padding.bottom;
-    const maxVal = Math.max(60, ...dataPoints.map((p) => p.minutes));
+    const goal = Number(goalMinutes || 0);
+    const maxVal = Math.max(60, Math.ceil(goal * 1.2), ...dataPoints.map((p) => p.minutes));
 
     // 1. 水平參考線與刻度
     ctx.strokeStyle = t.grid;
@@ -116,6 +118,25 @@ const Charts = {
       ctx.stroke();
 
       ctx.fillText(`${yVal}m`, padding.left - 8, y + 3.5);
+    }
+
+    // 1B. 每日目標水平虛線
+    if (goal > 0 && goal <= maxVal) {
+      const gy = padding.top + chartHeight - chartHeight * (goal / maxVal);
+      ctx.save();
+      ctx.strokeStyle = t.warning;
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(padding.left, gy);
+      ctx.lineTo(padding.left + chartWidth, gy);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = t.warning;
+      ctx.textAlign = 'right';
+      ctx.font = '500 10.5px "JetBrains Mono", monospace';
+      ctx.fillText(`目標 ${goal}m`, padding.left + chartWidth - 2, gy - 5);
+      ctx.restore();
     }
 
     // 2. 計算節點座標

@@ -13,15 +13,23 @@ service cloud.firestore {
       return isSignedIn() && request.auth.token.email == 'hippoking1@gmail.com';
     }
 
+    // 僅允許系統定義的 8 個正規集合，防範任意子集合寫入濫用
+    function isAllowedCollection(col) {
+      return col in [
+        'config', 'syllabus', 'progress', 'questions',
+        'reviewCards', 'examResults', 'oralPractices', 'studyLogs'
+      ];
+    }
+
     // 禁止任何寫入在 config/settings 夾帶 geminiApiKey 明文金鑰
     function hasNoApiKey(col, docId) {
       return !(col == 'config' && docId == 'settings' && ('geminiApiKey' in request.resource.data));
     }
 
-    // 使用者專屬雲端空間（僅本人 Google UID 可讀寫）
+    // 使用者專屬雲端空間（僅本人 Google UID 可讀寫白名單集合）
     match /users/{userId}/{collectionName}/{docId} {
-      allow read, delete: if isUser(userId);
-      allow create, update: if isUser(userId) && hasNoApiKey(collectionName, docId);
+      allow read, delete: if isUser(userId) && isAllowedCollection(collectionName);
+      allow create, update: if isUser(userId) && isAllowedCollection(collectionName) && hasNoApiKey(collectionName, docId);
     }
 
     // v3.0 遺留頂層集合：僅限原擁有者登入後讀取搬移並刪除歷史明文金鑰

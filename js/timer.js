@@ -160,13 +160,13 @@ const StudyTimer = {
 };
 
 /**
- * 模擬測驗倒數計時器（同樣採用真實時間戳，避免切換視窗計時飄移）
+ * 模擬測驗倒數計時器（採用真實時間戳，支援重新整理後依 startedAt 無縫續計）
  */
 class ExamTimer {
-  constructor(durationSeconds, onTick, onTimeUp) {
+  constructor(durationSeconds, onTick, onTimeUp, startedAtMs = null) {
     this.duration = durationSeconds;
-    this.elapsed = 0;
-    this.startTime = null;
+    this.startTime = startedAtMs || null;
+    this.elapsed = this.startTime ? Math.max(0, Math.floor((Date.now() - this.startTime) / 1000)) : 0;
     this.onTick = onTick;
     this.onTimeUp = onTimeUp;
     this.intervalId = null;
@@ -174,10 +174,12 @@ class ExamTimer {
   }
 
   start() {
-    this.startTime = Date.now();
-    this.intervalId = setInterval(() => {
+    if (!this.startTime) {
+      this.startTime = Date.now();
+    }
+    const tick = () => {
       if (this.isStopped) return;
-      this.elapsed = Math.floor((Date.now() - this.startTime) / 1000);
+      this.elapsed = Math.max(0, Math.floor((Date.now() - this.startTime) / 1000));
       const remaining = Math.max(0, this.duration - this.elapsed);
 
       if (this.onTick) this.onTick(remaining, this.elapsed);
@@ -186,13 +188,15 @@ class ExamTimer {
         this.stop();
         if (this.onTimeUp) this.onTimeUp();
       }
-    }, 500);
+    };
+    tick();
+    this.intervalId = setInterval(tick, 500);
   }
 
   stop() {
     this.isStopped = true;
     if (this.startTime) {
-      this.elapsed = Math.floor((Date.now() - this.startTime) / 1000);
+      this.elapsed = Math.max(0, Math.floor((Date.now() - this.startTime) / 1000));
     }
     if (this.intervalId) {
       clearInterval(this.intervalId);

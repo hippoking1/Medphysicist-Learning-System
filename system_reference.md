@@ -1,29 +1,38 @@
-# 醫學物理師考照自學系統 — 系統架構與設計文件 (System Reference v3.5)
+# 醫學物理師考照自學系統 — 系統架構與設計文件 (System Reference v4.0)
 
-本文件紀錄 **v3.5** 在 `/rightproblem-coach`、`/unslop` 與 `/ponytail` 審核後之身分認證、資安零金鑰架構與互動模擬實驗室設計。
+本文件紀錄 **v4.0** 整合 `/rightproblem-coach`、`/security-audit`、`/modern-web-guidance`、`/ponytail`、`/unslop`、`/frontend-design-html` 與 `/gsap-plugins` 後之高效率快取架構、資安縱深防線與現代化前端設計。
 
 ---
 
-## 1. 技術棧與核心架構
+## 1. 核心架構演進 (v3.5 → v4.0)
 
-- **託管與部署注入**：GitHub Pages 搭配 `.github/workflows/deploy.yml`，於建置期自 GitHub Repository Secret (`FIREBASE_CONFIG`) 注入 `DEFAULT_FIREBASE_CONFIG`，確保 Git 原始碼零憑證。
-- **認證與資料庫隔離**：Firebase Authentication (Google OAuth Sign-in) 搭配 Cloud Firestore `/users/{uid}/...` 個人隔離空間與 `firestore.rules` 伺服器端強制校驗；未登入時自動降級至 `localStorage` (`mp_*`)，切換帳號時自動隔離/清理快取。
-- **Gemini AI 雙軌授權引擎**：
-  1. 優先採用 Google OAuth Access Token (`generative-language` scope，僅存 `sessionStorage`)。
-  2. 支援透過 Web Credential Management API (`PasswordCredential` + `<form autocomplete>`) 綁定 Google Email 自動帶入 API Key 至本機 `sessionStorage`，**絕不寫入 Firestore、LocalStorage 或 JSON 備份檔**。
-- **互動式醫學物理實驗室 (`js/diagrams.js`)**：採用單一事件委派引擎驅動全 16 種臨床與放射物理模擬器，支援即時參數滑桿、模式切換、`getScreenCTM()` 游標十字探針讀數與組件點擊檢視。
+- **零延遲資料快取層 (`js/db.js`)**：將原本重複 8 次的 Firestore / LocalStorage 讀寫收斂為統一之 `_getColCached` / `_upsertDoc` / `_deleteDoc` Read/Write-Through 快取核心，搭配 `preloadAll()` 平行預載與 `count()` 聚合查詢；暖快取切頁為 0 網路延遲。
+- **縱深資安防線 (`SafeHTML` + Header Auth + 白名單部署)**：
+  - `SafeHTML` (`js/diagrams.js`) 透過 `DOMParser` 惰性解析與白名單節點重建，過濾剪貼簿筆記、AI 回傳 HTML、題庫與閃卡之危險標籤／事件／協議，防堵 Stored & DOM XSS。
+  - `GeminiService` (`js/gemini.js`) 改以 `x-goog-api-key` HTTP Header 傳遞本機 Session API Key，杜絕 URL Query 外洩。
+  - `firestore.rules` 增加 8 大合法集合白名單 `isAllowedCollection(col)`；`.github/workflows/deploy.yml` 改為 `_site/` 白名單打包，並移除已退役之 `gas-project/` 舊版目錄與硬編碼個人試算表 ID。
+- **現代 Web Platform API (`index.html`, `css/style.css`)**：
+  - `<meta name="color-scheme">` 與 CSS `color-scheme` + `storage` 多分頁主題同步。
+  - 標準 `scrollbar-width` / `scrollbar-color` 搭配 `@supports not (scrollbar-color: auto)` WebKit 降級。
+  - `<dialog closedby="any">` / `closedby="closerequest"` 與座標盒點擊降級、`@starting-style` + 獨立宣告 `transition-behavior: allow-discrete` Top-Layer 動畫。
+  - `#toast` 升級為 `popover="manual"` Top-Layer 通知與 `aria-live="polite"`。
+  - 長清單視窗外項目採用 `content-visibility: auto; contain-intrinsic-size: auto none auto 152px`。
+- **GSAP 精準互動與備考效率閉環 (`js/router.js`, `js/app.js`, `js/timer.js`)**：
+  - `Motion` 適配層註冊 `Flip`、`Draggable`、`ScrollToPlugin` 並以 `gsap.matchMedia()` 尊重 `prefers-reduced-motion`，離線環境自動無痛降級。
+  - 新增全局 `Ctrl+K` / `/` 命令面板、儀表板首屏「今日研讀焦點英雄卡」+ 四態分佈 + 弱點模組排行、7 日目標參考虛線折線圖、課綱即時檢索、浮動計時器自由拖曳，以及模擬考 `sessionStorage` 斷點恢復 + 待查標記 + 鍵盤作答流。
 
 ---
 
 ## 2. 模組職責
 
-- `firebase.json` & `firestore.rules`：宣告式 Firestore 安全規則，鎖定 `request.auth.uid == userId`、伺服器端禁止於 `config/settings` 寫入 `geminiApiKey`，並支援原擁有者讀取遷移 v3.0 頂層集合。
-- `index.html`：SPA 入口、Firebase Auth/Firestore Compat SDK、側邊欄 Google 帳號卡與系統設定雙軌授權介面。
-- `css/style.css`：Ink Dark (`#0d1017`) 與 Warm Paper (`#f7f4ee`) 雙主題設計系統、4px 網格與 `.mp-lab` 實驗室讀數列樣式。
-- `js/firebase-config.js`：`signInWithGoogle`、`authorizeGeminiOAuth`、`signOutGoogle`、`waitForInitialAuth`、`onAuthChanged` 及伺服器實測探針。
-- `js/db.js`：`/users/{uid}` 雙模 DAO、v3.0 舊版頂層資料自動上雲遷移、`FieldValue.delete()` 歷史明文金鑰自動銷毀、`PasswordCredential` 本機存取與全 10 模組模擬考組卷。
-- `js/gemini.js`：`_fetchWithAuth` 雙軌認證（OAuth Bearer Token + Session API Key 自動降級容錯）與 45–150 秒 `AbortController` 超時防護。
-- `js/diagrams.js`：16 座互動式醫學物理模擬實驗室 (`_LAB_BUILDERS`)、0-Token NotebookLM 公式保護型 Markdown 解析器與舊式 SVG 色階正規化。
-- `js/charts.js`：動態讀取 CSS 變數繪製圓環進度圖、7 日學習折線圖與 M1~M10 10 軸雷達圖。
-- `js/timer.js`：基於 `Date.now()` 時間戳差值與 `sessionStorage` 之防背景節流計時器。
-- `js/app.js` & `js/router.js`：8 大頁面控制器、`syncAuthUI` 狀態同步、Auth 切換自動重整視圖與題庫/閃卡閉環。
+- `firebase.json` & `firestore.rules`：宣告式 Firestore 安全規則，鎖定本人 UID、8 大集合白名單與伺服器端禁止寫入 `geminiApiKey`。
+- `index.html`：SPA 入口、非阻塞 `IBM Plex Sans` + `Noto Sans TC` + `JetBrains Mono` 載入、`color-scheme` 防閃爍腳本、Top-Layer 彈窗／Toast 與 `Ctrl+K` 命令面板。
+- `css/style.css`：Ink Dark (`#0d1017`) / Warm Paper (`#f7f4ee`) 雙主題、4px 網格系統、Top-Layer `@starting-style` 過渡、標準捲軸與 `content-visibility: auto`。
+- `js/firebase-config.js`：`signInWithGoogle`、`authorizeGeminiOAuth`、`signOutGoogle`、`waitForInitialAuth`、`onAuthChanged` 及連線探針。
+- `js/db.js`：Read/Write-Through 記憶體快取 DAO、UID 隔離、平行 `preloadAll()`、SM-2 演算法 (`computeSM2Next`) 與 JSON / Google Sheet 搬移工具。
+- `js/diagrams.js`：`SafeHTML` 白名單淨化器、16 座互動式醫學物理模擬實驗室 (`_LAB_BUILDERS`) 與 0-Token NotebookLM 公式保護型 Markdown 解析器。
+- `js/gemini.js`：雙軌認證（OAuth Bearer Token + `x-goog-api-key` Header）與 `AbortController` 超時防護。
+- `js/charts.js`：雙主題 HTML5 Canvas 折線圖（含每日目標虛線）與 M1~M10 10 軸雷達圖。
+- `js/timer.js`：基於 `Date.now()` 時間戳差值與 `sessionStorage` 之學習計時器與支援斷點續計之 `ExamTimer`。
+- `js/app.js` & `js/router.js`：8 大頁面控制器、全局檢索面板、模擬考斷點持久化與鍵盤流、無閃爍路由器與 GSAP `Motion` 適配層。
+- `tests/self-check.mjs`：零相依 Node 自動化自檢腳本，驗證 `SafeHTML`、Markdown/LaTeX、SM-2 與靜態資安斷言。

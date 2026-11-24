@@ -3,20 +3,33 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark light">
   <title>醫學物理師考照自學系統</title>
 
-  <!-- 在 CSS 渲染前先套用儲存的閱讀主題，防止閃爍 -->
+  <!-- 在 CSS 渲染前先同步 color-scheme 與閱讀主題，防止 FOUC 閃爍 -->
   <script>
     (function () {
-      var t = localStorage.getItem('mp_theme');
-      if (t === 'light') {
-        document.documentElement.setAttribute('data-theme', 'light');
-      }
+      try {
+        var t = localStorage.getItem('mp_theme');
+        var meta = document.querySelector('meta[name="color-scheme"]');
+        if (t === 'light') {
+          document.documentElement.setAttribute('data-theme', 'light');
+          if (meta) meta.content = 'light';
+        } else if (t === 'dark') {
+          document.documentElement.removeAttribute('data-theme');
+          if (meta) meta.content = 'dark';
+        } else {
+          if (meta) meta.content = 'dark';
+        }
+      } catch (e) {}
     })();
   </script>
 
-  <!-- Material Icons -->
-  <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
+  <!-- 非阻塞字體載入：IBM Plex Sans + Noto Sans TC + JetBrains Mono + Material Icons -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round&display=block" rel="stylesheet">
 
   <!-- MathJax Configuration (含啟動排隊、重複排版清除與備援 CDN) -->
   <script>
@@ -64,28 +77,37 @@
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
 
+  <!-- GSAP 3 + 官方免費插件 (含 SHA-384 SRI 完整性校驗，離線時自動無痛降級) -->
+  <script defer src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/gsap.min.js" integrity="sha384-HOvlOYPIs/zjoIkWUGXkVmXsjr8GuZLV+Q+rcPwmJOVZVpvTSXQChiN4t9Euv9Vc" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/Flip.min.js" integrity="sha384-lg3+EgIwmxYq9YD4ix279pdUEasqmOS17fF+2mI/NEg6JHkawYaWYpJ6nKZenPOy" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/Draggable.min.js" integrity="sha384-IJ0us7IOIdtwqJI237hVYv2U3Qt2IL5AkFeroJOnvSYXbNLBxkQ9xQ2sdidcbzTr" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/ScrollToPlugin.min.js" integrity="sha384-dUEYjN2xd8Wk4WIZYrCpK7Ww7+r/LVtVebVp8skuwm9bKGoVo2bZrWuA79w8TI+v" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+
   <!-- 全局樣式表 -->
-  <link rel="stylesheet" href="css/style.css?v=3.6">
+  <link rel="stylesheet" href="css/style.css?v=4.0">
 </head>
 <body>
 
 <!-- 行動裝置頂部導覽列 -->
 <header class="mobile-header">
-  <div style="display: flex; align-items: center; gap: 8px;">
+  <div class="flex-row gap-8">
     <button id="btn-sidebar-toggle" class="btn-sidebar-toggle" aria-label="開啟選單">
       <span class="material-icons-round">menu</span>
     </button>
     <div class="mobile-brand">
-      <div class="brand-icon" style="width: 26px; height: 26px; font-size: 11px;">MP</div>
+      <div class="brand-icon brand-icon-sm">MP</div>
       <div class="mobile-brand-text">醫學物理師備考工作台</div>
     </div>
   </div>
-  <div style="display: flex; align-items: center; gap: 6px;">
+  <div class="flex-row gap-6">
+    <button id="btn-cmd-mobile" class="btn btn-secondary btn-sm" onclick="openCommandPalette()" aria-label="快速搜尋">
+      <span class="material-icons-round">search</span>
+    </button>
     <button id="btn-auth-mobile" class="btn btn-secondary btn-sm" title="Google 帳號登入/狀態">
       <span class="material-icons-round" id="auth-icon-mobile">login</span>
       <span id="auth-label-mobile">登入</span>
     </button>
-    <button id="btn-theme-toggle-mobile" class="btn btn-secondary btn-sm" onclick="toggleTheme()" title="切換深色/淺色紙本閱讀模式">
+    <button id="btn-theme-toggle-mobile" class="btn btn-secondary btn-sm" onclick="toggleTheme()" title="切換深色/淺色紙本閱讀模式" aria-label="切換閱讀主題">
       <span class="material-icons-round" id="theme-icon-mobile">light_mode</span>
     </button>
   </div>
@@ -103,6 +125,14 @@
         <p>考照備考工作台</p>
       </div>
     </div>
+
+    <button id="btn-open-cmd-palette" class="cmd-trigger-btn" type="button" onclick="openCommandPalette()" title="快速跳轉單元、物理模擬器與頁面 (Ctrl+K)">
+      <span class="flex-row gap-8">
+        <span class="material-icons-round nav-icon">search</span>
+        <span>快速搜尋</span>
+      </span>
+      <span class="kbd">Ctrl K</span>
+    </button>
 
     <ul class="nav-menu">
       <li class="nav-item active" data-page="dashboard">
@@ -174,14 +204,14 @@
         <span class="material-icons-round" id="theme-icon-desktop">light_mode</span>
         <span id="theme-label-desktop">淺色紙本模式</span>
       </button>
-      <div class="sidebar-meta">ROC Medical Physicist v3.5</div>
+      <div class="sidebar-meta">ROC Medical Physicist v4.0</div>
     </div>
   </aside>
 
   <!-- 主要內容區域 -->
   <main class="main-content">
     <div id="auth-status-banner" class="auth-banner" style="display: none;">
-      <div style="display: flex; align-items: center; gap: 10px;">
+      <div class="flex-row gap-10">
         <span class="material-icons-round" style="color: var(--warning); font-size: 18px;">account_circle</span>
         <span>雲端專案已就緒，登入您的 Google 帳號即可跨裝置同步學習進度、題庫與帶入 Gemini 授權。</span>
       </div>
@@ -190,7 +220,7 @@
         <span>使用 Google 帳號登入</span>
       </button>
     </div>
-    <div id="app-view">
+    <div id="app-view" tabindex="-1">
       <div class="loader-container">
         <div class="spinner"></div>
         <div class="loading-text">載入系統中</div>
@@ -199,37 +229,39 @@
   </main>
 </div>
 
-<!-- 浮動學習計時器 -->
-<div id="floating-timer" class="floating-timer">
+<!-- 可拖曳浮動學習計時器 (GSAP Draggable) -->
+<div id="floating-timer" class="floating-timer" role="region" aria-label="學習計時器">
+  <span class="material-icons-round timer-drag-grip" title="按住拖曳移動位置" aria-hidden="true">drag_indicator</span>
   <span class="material-icons-round" style="color: var(--accent);">timer</span>
-  <div>
-    <div style="font-size: 11px; color: var(--text-muted);">正在學習：<span id="timer-unit-name">未指定</span></div>
+  <div class="timer-meta">
+    <div class="timer-unit-label">正在學習：<span id="timer-unit-name">未指定</span></div>
     <div id="timer-time" class="timer-time">00:00:00</div>
   </div>
-  <button id="btn-timer-pause" class="btn btn-secondary btn-sm" title="暫停/繼續">
+  <button id="btn-timer-pause" class="btn btn-secondary btn-sm" title="暫停/繼續" aria-label="暫停或繼續計時">
     <span class="material-icons-round">pause</span>
   </button>
-  <button id="btn-timer-stop" class="btn btn-primary btn-sm" title="結束並記錄進度">
+  <button id="btn-timer-stop" class="btn btn-primary btn-sm" title="結束並記錄進度" aria-label="結束計時並儲存">
     <span class="material-icons-round">done</span>
   </button>
 </div>
 
-<!-- Toast 全局通知 -->
-<div id="toast" class="toast">
-  <span id="toast-icon" class="material-icons-round" style="font-size: 18px;">info</span>
+<!-- Top-Layer Toast 全局通知 (popover="manual" 確保高於 <dialog>) -->
+<div id="toast" class="toast" popover="manual" role="status" aria-live="polite" aria-atomic="true">
+  <span id="toast-icon" class="material-icons-round">info</span>
   <span id="toast-message">系統訊息</span>
+  <button type="button" class="toast-close" popovertarget="toast" popovertargetaction="hide" onclick="hideToast()" aria-label="關閉通知">&times;</button>
 </div>
 
 <!-- ========================================== -->
 <!-- 頁面 Templates -->
 <!-- ========================================== -->
 
-<!-- 1. 儀表板 Template -->
+<!-- 1. 儀表板 Template (v4.0 首屏焦點工作台架構) -->
 <template id="template-dashboard">
   <div class="page-header">
     <div class="page-title">
       <h2>備考學習儀表板</h2>
-      <p>10 大考科、37 單元進度與每日記憶排程總覽</p>
+      <p>10 大考科、37 單元進度與每日間隔重複排程總覽</p>
     </div>
     <div class="countdown-pill">
       <span class="material-icons-round" style="font-size: 18px; color: var(--accent);">event</span>
@@ -239,8 +271,34 @@
     </div>
   </div>
 
+  <!-- 今日研讀焦點英雄卡 (1-Click 直達單元共讀工作台) -->
+  <section class="surface-card dash-focus-hero" aria-label="今日研讀焦點">
+    <div class="dash-focus-main">
+      <div class="dash-focus-eyebrow">
+        <span class="mp-lab-dot" aria-hidden="true"></span>
+        <span id="dash-rec-badge">下一順位研讀單元</span>
+        <span id="dash-rec-week" class="mono-num text-muted"></span>
+      </div>
+      <h3 id="dash-rec-title" class="dash-focus-title">載入進度中</h3>
+      <div class="dash-focus-meta">
+        <span>文獻：<span id="dash-rec-lit">--</span></span>
+      </div>
+      <p id="dash-rec-desc" class="dash-focus-desc">正在計算建議研讀順序</p>
+    </div>
+    <div class="dash-focus-actions">
+      <button id="btn-dash-open-ws" class="btn btn-primary" type="button">
+        <span class="material-icons-round">menu_book</span>
+        <span>進入共讀工作台</span>
+      </button>
+      <button id="btn-dash-start-timer" class="btn btn-secondary" type="button">
+        <span class="material-icons-round">timer</span>
+        <span>啟動本單元計時</span>
+      </button>
+    </div>
+  </section>
+
   <!-- 核心純數字指標行 (Stat Cards) -->
-  <div class="grid-cols-4" style="margin-bottom: 24px;">
+  <div class="grid-cols-4 section-gap">
     <div class="surface-card stat-card stat-card-accent">
       <div class="stat-label">課綱完成度</div>
       <div class="stat-value mono-num"><span id="dash-progress-percent">0</span><span class="stat-unit"> %</span></div>
@@ -266,66 +324,78 @@
     </div>
   </div>
 
-  <!-- 圖表區 -->
-  <div class="grid-cols-3" style="margin-bottom: 24px;">
-    <div class="surface-card" style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 300px;">
-      <div class="card-title" style="align-self: flex-start; margin-bottom: 12px; width: 100%;">整體進度分布</div>
-      <div style="width: 100%; height: 200px; display: flex; align-items: center; justify-content: center;">
-        <canvas id="canvas-progress-donut" style="width: 180px; height: 180px;"></canvas>
+  <!-- 雙軸分析區：單元狀態分佈 + 弱點診斷 | 近 7 日研讀趨勢 (含目標虛線) -->
+  <div class="grid-cols-3 section-gap">
+    <div class="surface-card dash-status-card">
+      <div class="card-header">
+        <h3 class="card-title">37 單元狀態與弱點</h3>
+      </div>
+
+      <div class="status-stacked-bar" id="dash-status-bar" aria-label="單元完成狀態分佈"></div>
+      <div class="status-legend-grid" id="dash-status-legend"></div>
+
+      <div class="dash-weak-section">
+        <div class="dash-weak-head">
+          <span>近 5 次模考待補強模組</span>
+          <span id="dash-avg-exam" class="mono-num text-muted">尚無成績</span>
+        </div>
+        <div id="dash-weak-list" class="dash-weak-list"></div>
       </div>
     </div>
 
-    <div class="surface-card span-2" style="height: 300px;">
-      <div class="card-header" style="border: none; padding: 0; margin-bottom: 8px;">
+    <div class="surface-card span-2 dash-chart-card">
+      <div class="card-header card-header-flat">
         <div class="card-title">近 7 日每日學習分鐘數</div>
+        <span class="mono-num text-dark" style="font-size: 12px;">虛線 = 每日目標</span>
       </div>
-      <div style="width: 100%; height: 230px; position: relative;">
-        <canvas id="canvas-study-line" style="width: 100%; height: 100%;"></canvas>
+      <div class="chart-canvas-wrap">
+        <canvas id="canvas-study-line" class="chart-canvas-fill"></canvas>
       </div>
     </div>
   </div>
 
+  <!-- 10 大考科進度 + 快捷行動列 -->
   <div class="grid-cols-3">
     <div class="surface-card span-2">
       <div class="card-header">
-        <h3 class="card-title">10 大考科模組進度</h3>
+        <h3 class="card-title">10 大考科模組進度（點擊模組快速篩選課綱）</h3>
       </div>
-      <div id="dash-module-list" style="display: flex; flex-direction: column; gap: 12px;">
-        <div style="color: var(--text-muted); font-size: 13px; text-align: center;">載入中</div>
+      <div id="dash-module-list" class="dash-module-list">
+        <div class="empty-hint">載入中</div>
       </div>
     </div>
 
-    <div class="surface-card" style="display: flex; flex-direction: column; justify-content: space-between; gap: 16px;">
-      <div>
-        <div class="card-header">
-          <h3 class="card-title">下一順位研讀單元</h3>
-        </div>
-        <div id="dash-rec-card-body" class="sub-card">
-          <div style="font-weight: 600; font-size: 14px; color: var(--accent);" id="dash-rec-title">規劃中</div>
-          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">文獻：<span id="dash-rec-lit">--</span></div>
-          <p style="font-size: 12.5px; color: var(--text-dark); margin-top: 8px;" id="dash-rec-desc">載入進度中</p>
-        </div>
+    <div class="surface-card dash-quick-actions">
+      <div class="card-header">
+        <h3 class="card-title">實戰考照工作流</h3>
       </div>
-
-      <div style="display: flex; flex-direction: column; gap: 8px;">
-        <button class="btn btn-primary" onclick="window.location.hash='#practice'" style="width: 100%;">
+      <div class="stack-col gap-8">
+        <button class="btn btn-primary w-full" onclick="window.location.hash='#practice'">
           <span class="material-icons-round">quiz</span>
           <span>進入題庫作答</span>
         </button>
-        <button class="btn btn-secondary" onclick="window.location.hash='#review'" style="width: 100%;">
+        <button class="btn btn-secondary w-full" onclick="window.location.hash='#review'">
           <span class="material-icons-round">layers</span>
           <span>複習到期卡片 (<span id="btn-due-count" class="mono-num">0</span>)</span>
         </button>
-        <button class="btn btn-secondary" onclick="window.location.hash='#oral'" style="width: 100%;">
+        <button class="btn btn-secondary w-full" onclick="window.location.hash='#exam'">
+          <span class="material-icons-round">assignment</span>
+          <span>開啟模擬測驗</span>
+        </button>
+        <button class="btn btn-secondary w-full" onclick="window.location.hash='#oral'">
           <span class="material-icons-round">record_voice_over</span>
           <span>口試模擬問答</span>
+        </button>
+        <button class="btn btn-secondary w-full" onclick="openCommandPalette()">
+          <span class="material-icons-round">search</span>
+          <span>全局檢索單元 / 模擬器</span>
         </button>
       </div>
     </div>
   </div>
 </template>
 
-<!-- 2. 課綱與進度 Template (含一站式單元共讀工作台) -->
+<!-- 2. 課綱與進度 Template (含即時檢索、狀態篩選與一站式單元共讀工作台) -->
 <template id="template-syllabus">
   <!-- A. 課綱總覽清單視圖 -->
   <div id="syllabus-list-view">
@@ -334,10 +404,25 @@
         <h2>學習課綱與進度規劃</h2>
         <p>10 大考科、37 個學習單元，點擊「進入研讀」即可於同畫面展開講義、原文 PDF 與隨堂測驗</p>
       </div>
+      <div class="mono-num text-muted" style="font-size: 12px;">顯示 <span id="syllabus-visible-count">37</span> / 37 單元</div>
     </div>
 
-    <div class="surface-card" style="margin-bottom: 16px; padding: 14px 16px;">
-      <div style="display: flex; gap: 8px; flex-wrap: wrap;" id="syllabus-module-tabs">
+    <div class="surface-card syllabus-filter-bar">
+      <div class="syllabus-search-row">
+        <div class="search-input-wrap">
+          <span class="material-icons-round search-input-icon">search</span>
+          <input type="search" id="syllabus-search-input" class="form-control search-input" placeholder="篩選單元代碼、TG 報告、文獻或考點關鍵字（例如 TG-51、MLC、CTDI）">
+        </div>
+        <div class="flex-row gap-6 flex-wrap" id="syllabus-status-filters">
+          <button type="button" class="btn btn-primary btn-sm status-tab-btn active" data-status="ALL">全部狀態</button>
+          <button type="button" class="btn btn-secondary btn-sm status-tab-btn" data-status="in_progress">進行中</button>
+          <button type="button" class="btn btn-secondary btn-sm status-tab-btn" data-status="review">需複習</button>
+          <button type="button" class="btn btn-secondary btn-sm status-tab-btn" data-status="not_started">未開始</button>
+          <button type="button" class="btn btn-secondary btn-sm status-tab-btn" data-status="completed">已完成</button>
+        </div>
+      </div>
+
+      <div class="flex-row gap-8 flex-wrap" id="syllabus-module-tabs">
         <button class="btn btn-primary btn-sm tab-btn active" data-mod="ALL">全部模組</button>
         <button class="btn btn-secondary btn-sm tab-btn" data-mod="M1">M1 基礎物理</button>
         <button class="btn btn-secondary btn-sm tab-btn" data-mod="M2">M2 劑量學</button>
@@ -352,7 +437,7 @@
       </div>
     </div>
 
-    <div id="syllabus-list" style="display: flex; flex-direction: column; gap: 12px;">
+    <div id="syllabus-list" class="stack-col gap-12">
       <div class="loader-container">
         <div class="spinner"></div>
         <div class="loading-text">載入課綱進度中</div>
@@ -663,6 +748,18 @@
     </div>
   </div>
 
+  <!-- 未完成模擬考恢復橫幅 -->
+  <div id="exam-resume-banner" class="auth-banner" style="display: none;">
+    <div class="flex-row gap-10">
+      <span class="material-icons-round" style="color: var(--accent); font-size: 18px;">restore</span>
+      <span id="exam-resume-info">偵測到進行中的模擬測驗，可立即恢復作答。</span>
+    </div>
+    <div class="flex-row gap-8">
+      <button id="btn-resume-exam" class="btn btn-primary btn-sm">恢復作答</button>
+      <button id="btn-discard-exam" class="btn btn-secondary btn-sm">放棄紀錄</button>
+    </div>
+  </div>
+
   <!-- 1. 測驗設定與歷史紀錄 -->
   <div id="exam-setup-view" class="grid-cols-3">
     <div class="surface-card" style="height: fit-content;">
@@ -735,9 +832,22 @@
 
     <div class="surface-card span-3" style="display: flex; flex-direction: column; justify-content: space-between; min-height: 440px;">
       <div>
-        <div style="display: flex; justify-content: space-between; border-bottom: 1px solid var(--border-color); padding-bottom: 12px; margin-bottom: 16px;">
-          <span class="mono-num" style="font-weight: 600; color: var(--accent);">第 <span id="active-q-index">1</span> 題</span>
-          <span class="badge badge-todo mono-num">難度 <span id="active-q-diff">1</span></span>
+        <div class="exam-q-head">
+          <div class="flex-row gap-8">
+            <span class="mono-num" style="font-weight: 600; color: var(--accent);">第 <span id="active-q-index">1</span> 題</span>
+            <span class="badge badge-todo mono-num">難度 <span id="active-q-diff">1</span></span>
+          </div>
+          <div class="flex-row gap-8 flex-wrap">
+            <span class="exam-kbd-hints">
+              <span class="kbd">1–4</span> 選答
+              <span class="kbd">←/→</span> 切題
+              <span class="kbd">F</span> 標記
+            </span>
+            <button type="button" id="btn-exam-flag" class="btn btn-secondary btn-sm" title="標記此題待會回頭複查 (快捷鍵 F)">
+              <span class="material-icons-round">flag</span>
+              <span id="exam-flag-label">標記待查</span>
+            </button>
+          </div>
         </div>
 
         <div id="active-q-text" class="markdown-view" style="font-size: 15px; margin-bottom: 20px;">載入題目中</div>
@@ -1271,7 +1381,7 @@
           </p>
           <div class="form-group" style="margin-bottom: 8px;">
             <label class="form-label" for="input-gsheet-id">Google Sheet ID 或完整網址</label>
-            <input type="text" id="input-gsheet-id" class="form-control mono-num" value="1-ATEDk8TtYZRA0gdOFfgzp5ZIYpYWzSRHvcE5eaYcnQ">
+            <input type="text" id="input-gsheet-id" class="form-control mono-num" placeholder="貼上試算表網址或 ID（例如 1-ATEDk...）">
           </div>
           <button id="btn-migrate-gsheet" class="btn btn-primary" style="width: 100%;">
             <span class="material-icons-round">move_up</span>
@@ -1303,11 +1413,29 @@
 </template>
 
 <!-- ========================================== -->
-<!-- 原生 HTML5 <dialog> 彈窗 -->
+<!-- 原生 HTML5 <dialog> 彈窗 (含 closedby 與 aria-labelledby) -->
 <!-- ========================================== -->
 
+<!-- 全局快速檢索面板 (Ctrl+K) -->
+<dialog id="cmd-palette-modal" class="modal-dialog cmd-dialog" closedby="any" aria-labelledby="cmd-palette-title">
+  <div class="modal-content cmd-modal-content">
+    <div class="cmd-search-head">
+      <span class="material-icons-round" style="color: var(--accent);">search</span>
+      <label id="cmd-palette-title" class="sr-only" for="cmd-palette-input">全局快速檢索單元、模擬器與頁面</label>
+      <input type="search" id="cmd-palette-input" class="cmd-input" autocomplete="off" placeholder="輸入單元代碼、TG 報告、16 座物理模擬器或頁面名稱...">
+      <span class="kbd">Esc</span>
+    </div>
+    <div id="cmd-palette-results" class="cmd-results" role="listbox" aria-label="檢索結果"></div>
+    <div class="cmd-footer">
+      <span><span class="kbd">↑/↓</span> 移動</span>
+      <span><span class="kbd">Enter</span> 前往</span>
+      <span><span class="kbd">Ctrl K</span> 切換面板</span>
+    </div>
+  </div>
+</dialog>
+
 <!-- 更新進度/筆記 -->
-<dialog id="progress-modal" class="modal-dialog">
+<dialog id="progress-modal" class="modal-dialog" closedby="any" aria-labelledby="progress-modal-title">
   <div class="modal-content">
     <div class="modal-header">
       <h3 id="progress-modal-title">更新學習進度</h3>
@@ -1343,7 +1471,7 @@
 </dialog>
 
 <!-- 標準物理圖解檢視 -->
-<dialog id="diagram-modal" class="modal-dialog">
+<dialog id="diagram-modal" class="modal-dialog" closedby="any" aria-labelledby="diagram-modal-title">
   <div class="modal-content" style="max-width: 780px; display: flex; flex-direction: column; max-height: 88vh;">
     <div class="modal-header">
       <h3 id="diagram-modal-title">標準醫學物理圖解</h3>
@@ -1357,17 +1485,17 @@
 </dialog>
 
 <!-- AI 生卡 -->
-<dialog id="ai-card-modal" class="modal-dialog">
+<dialog id="ai-card-modal" class="modal-dialog" closedby="closerequest" aria-labelledby="ai-card-modal-title">
   <div class="modal-content">
     <div class="modal-header">
-      <h3>AI 快速生成知識卡片</h3>
+      <h3 id="ai-card-modal-title">AI 快速生成知識卡片</h3>
       <button class="modal-close" onclick="closeAICardModal()" aria-label="關閉">&times;</button>
     </div>
     <input type="hidden" id="ai-modal-mod-id">
     <input type="hidden" id="ai-modal-unit-id">
 
     <div class="form-group">
-      <label class="form-label">貼上文獻重點段落或讀書摘要（中英文皆可）：</label>
+      <label class="form-label" for="ai-card-text">貼上文獻重點段落或讀書摘要（中英文皆可）：</label>
       <textarea id="ai-card-text" rows="8" class="form-control" placeholder="貼上段落內容，AI 將提煉 3–5 張雙面記憶卡片"></textarea>
     </div>
 
@@ -1382,7 +1510,7 @@
 </dialog>
 
 <!-- NotebookLM 提示詞 -->
-<dialog id="notebooklm-modal" class="modal-dialog">
+<dialog id="notebooklm-modal" class="modal-dialog" closedby="any" aria-labelledby="notebooklm-modal-title">
   <div class="modal-content" style="max-width: 700px; display: flex; flex-direction: column; max-height: 86vh;">
     <div class="modal-header">
       <h3 id="notebooklm-modal-title">NotebookLM 學習提示詞</h3>
@@ -1394,7 +1522,7 @@
         複製下方提示詞並貼至您的 NotebookLM 筆記本，即可根據已上傳文獻 PDF 生成公式推導與品管規範整理。
       </p>
       <div class="form-group">
-        <label class="form-label">單元專屬提示詞</label>
+        <label class="form-label" for="notebooklm-prompt-text">單元專屬提示詞</label>
         <textarea id="notebooklm-prompt-text" rows="12" class="form-control" readonly></textarea>
       </div>
     </div>
@@ -1406,7 +1534,7 @@
       </button>
       <div style="display: flex; gap: 8px;">
         <button class="btn btn-secondary" onclick="closeNotebookLMModal()">關閉</button>
-        <a id="btn-open-notebooklm" class="btn btn-secondary" target="_blank" rel="noopener" href="#">
+        <a id="btn-open-notebooklm" class="btn btn-secondary" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" href="#">
           <span class="material-icons-round">open_in_new</span>
           <span>前往 NotebookLM</span>
         </a>
@@ -1416,7 +1544,7 @@
 </dialog>
 
 <!-- 隨堂測驗 -->
-<dialog id="unit-quiz-modal" class="modal-dialog">
+<dialog id="unit-quiz-modal" class="modal-dialog" closedby="closerequest" aria-labelledby="quiz-modal-title">
   <div class="modal-content" style="max-width: 740px; display: flex; flex-direction: column; max-height: 88vh;">
     <div class="modal-header">
       <h3 id="quiz-modal-title">隨堂測驗</h3>
@@ -1433,10 +1561,10 @@
 </dialog>
 
 <!-- 手動新增題目 -->
-<dialog id="add-q-modal" class="modal-dialog">
+<dialog id="add-q-modal" class="modal-dialog" closedby="closerequest" aria-labelledby="add-q-modal-title">
   <div class="modal-content" style="max-width: 720px; max-height: 90vh; overflow-y: auto;">
     <div class="modal-header">
-      <h3>手動新增題目</h3>
+      <h3 id="add-q-modal-title">手動新增題目</h3>
       <button class="modal-close" onclick="closeAddQuestionModal()" aria-label="關閉">&times;</button>
     </div>
 
@@ -1521,17 +1649,26 @@
 <!-- ========================================== -->
 <!-- 載入 JavaScript 模組 -->
 <!-- ========================================== -->
-<script src="js/syllabus-data.js?v=3.5"></script>
-<script src="js/firebase-config.js?v=3.5"></script>
-<script src="js/db.js?v=3.5"></script>
-<script src="js/diagrams.js?v=3.6"></script>
-<script src="js/gemini.js?v=3.5"></script>
-<script src="js/charts.js?v=3.5"></script>
-<script src="js/timer.js?v=3.5"></script>
-<script src="js/app.js?v=3.5"></script>
-<script src="js/router.js?v=3.5"></script>
+<script src="js/syllabus-data.js?v=4.0"></script>
+<script src="js/firebase-config.js?v=4.0"></script>
+<script src="js/db.js?v=4.0"></script>
+<script src="js/diagrams.js?v=4.0"></script>
+<script src="js/gemini.js?v=4.0"></script>
+<script src="js/charts.js?v=4.0"></script>
+<script src="js/timer.js?v=4.0"></script>
+<script src="js/app.js?v=4.0"></script>
+<script src="js/router.js?v=4.0"></script>
 
 <script>
+  function hideToast() {
+    const toast = document.getElementById('toast');
+    if (!toast) return;
+    toast.classList.remove('show');
+    if (typeof toast.hidePopover === 'function' && toast.matches(':popover-open')) {
+      try { toast.hidePopover(); } catch (e) {}
+    }
+  }
+
   function showToast(message, type = 'info') {
     const toast = document.getElementById('toast');
     const icon = document.getElementById('toast-icon');
@@ -1539,17 +1676,29 @@
     if (!toast || !icon || !msgSpan) return;
 
     toast.className = `toast show ${type}`;
-    msgSpan.innerText = message;
+    msgSpan.textContent = message;
 
-    if (type === 'success') icon.innerText = 'check_circle';
-    else if (type === 'error') icon.innerText = 'error';
-    else if (type === 'warning') icon.innerText = 'warning';
-    else icon.innerText = 'info';
+    if (type === 'success') icon.textContent = 'check_circle';
+    else if (type === 'error') icon.textContent = 'error';
+    else if (type === 'warning') icon.textContent = 'warning';
+    else icon.textContent = 'info';
+
+    if (typeof toast.showPopover === 'function') {
+      try {
+        if (!toast.matches(':popover-open')) toast.showPopover();
+      } catch (e) {}
+    }
+
+    if (typeof document.ariaNotify === 'function') {
+      try { document.ariaNotify(String(message)); } catch (e) {}
+    }
 
     clearTimeout(window._toastTimer);
     window._toastTimer = setTimeout(() => {
-      toast.classList.remove('show');
-    }, 3200);
+      if (!toast.matches(':focus-within')) {
+        hideToast();
+      }
+    }, 3400);
   }
 
   function renderMath(targetEl) {
@@ -1572,35 +1721,71 @@
     }
   }
 
+  function applyThemeScheme(theme) {
+    const meta = document.querySelector('meta[name="color-scheme"]');
+    if (theme === 'light') {
+      document.documentElement.setAttribute('data-theme', 'light');
+      if (meta) meta.content = 'light';
+    } else {
+      document.documentElement.removeAttribute('data-theme');
+      if (meta) meta.content = 'dark';
+    }
+    syncThemeUI();
+  }
+
   function syncThemeUI() {
     const isLight = document.documentElement.getAttribute('data-theme') === 'light';
     const dIcon = document.getElementById('theme-icon-desktop');
     const dLabel = document.getElementById('theme-label-desktop');
     const mIcon = document.getElementById('theme-icon-mobile');
-    if (dIcon) dIcon.innerText = isLight ? 'dark_mode' : 'light_mode';
-    if (dLabel) dLabel.innerText = isLight ? '深色臨床模式' : '淺色紙本模式';
-    if (mIcon) mIcon.innerText = isLight ? 'dark_mode' : 'light_mode';
+    if (dIcon) dIcon.textContent = isLight ? 'dark_mode' : 'light_mode';
+    if (dLabel) dLabel.textContent = isLight ? '深色臨床模式' : '淺色紙本模式';
+    if (mIcon) mIcon.textContent = isLight ? 'dark_mode' : 'light_mode';
   }
 
   function toggleTheme() {
     const isLight = document.documentElement.getAttribute('data-theme') === 'light';
-    if (isLight) {
-      document.documentElement.removeAttribute('data-theme');
-      localStorage.setItem('mp_theme', 'dark');
-    } else {
-      document.documentElement.setAttribute('data-theme', 'light');
-      localStorage.setItem('mp_theme', 'light');
-    }
-    syncThemeUI();
+    const next = isLight ? 'dark' : 'light';
+    try { localStorage.setItem('mp_theme', next); } catch (e) {}
+    applyThemeScheme(next);
     if (typeof redrawActiveCharts === 'function') {
       redrawActiveCharts();
     }
   }
 
+  // 多分頁主題同步
+  window.addEventListener('storage', (e) => {
+    if (e.key === 'mp_theme') {
+      applyThemeScheme(e.newValue === 'light' ? 'light' : 'dark');
+      if (typeof redrawActiveCharts === 'function') redrawActiveCharts();
+    }
+  });
+
+  // 不支援 <dialog closedby="any"> 之瀏覽器降級：點擊 backdrop 座標自動關閉
+  function bindDialogLightDismissFallback() {
+    if ('closedBy' in HTMLDialogElement.prototype) return;
+    document.querySelectorAll('dialog[closedby="any"]').forEach((dialog) => {
+      dialog.addEventListener('click', (event) => {
+        if (event.target !== dialog) return;
+        const rect = dialog.getBoundingClientRect();
+        const inside =
+          rect.top <= event.clientY &&
+          event.clientY <= rect.top + rect.height &&
+          rect.left <= event.clientX &&
+          event.clientX <= rect.left + rect.width;
+        if (!inside) dialog.close();
+      });
+    });
+  }
+
   document.addEventListener('DOMContentLoaded', () => {
     syncThemeUI();
+    bindDialogLightDismissFallback();
     if (typeof StudyTimer !== 'undefined') {
       StudyTimer.restoreIfRunning();
+    }
+    if (typeof Motion !== 'undefined') {
+      Motion.init();
     }
 
     const btnToggle = document.getElementById('btn-sidebar-toggle');

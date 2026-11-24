@@ -1,14 +1,28 @@
 /**
- * 醫學物理師考照自學系統 - 資料存取層 (Data Access Object - db.js)
- * 支援以 Google Auth UID 隔離之 Cloud Firestore (/users/{uid}/...) 與 LocalStorage 雙模運作
- * 徹底禁止將 geminiApiKey 寫入 Firestore 或備份檔案
+ * 醫學物理師考照自學系統 - 資料存取層 (Data Access Object - js/db.js)
+ * v4.0 架構：
+ * - Google Auth UID 隔離之 Cloud Firestore (/users/{uid}/...) + LocalStorage 雙模運作
+ * - Read-Through / Write-Through 記憶體快取 (`_cache`) 與平行預載 (`preloadAll`)，切頁 0 網路讀取延遲
+ * - 徹底禁止將 geminiApiKey 寫入 Firestore、LocalStorage 或備份檔案
  */
 
-const LEGACY_GSHEET_ID = '1-ATEDk8TtYZRA0gdOFfgzp5ZIYpYWzSRHvcE5eaYcnQ';
+const LEGACY_GSHEET_ID = '';
 const SESSION_GEMINI_KEY = 'mp_session_gemini_key';
+const USER_COLLECTIONS = [
+  'syllabus',
+  'progress',
+  'questions',
+  'reviewCards',
+  'examResults',
+  'oralPractices',
+  'studyLogs'
+];
 
 const DB = {
   _sessionGeminiKey: '',
+  _cache: new Map(),
+  _initInFlight: null,
+  _preloadInFlight: null,
 
   _isCloudReady() {
     return Boolean(
@@ -46,24 +60,115 @@ const DB = {
     } catch (e) {}
   },
 
+  invalidateCache(key = null) {
+    if (key) {
+      this._cache.delete(key);
+    } else {
+      this._cache.clear();
+    }
+  },
+
+  isCacheWarm() {
+    return this._cache.has('syllabus') && this._cache.has('progress') && this._cache.has('config');
+  },
+
   clearLocalUserCache() {
-    const keys = [
-      'config',
-      'syllabus',
-      'progress',
-      'questions',
-      'reviewCards',
-      'examResults',
-      'oralPractices',
-      'studyLogs'
-    ];
-    keys.forEach((k) => {
+    ['config', ...USER_COLLECTIONS].forEach((k) => {
       try {
         localStorage.removeItem(`mp_${k}`);
       } catch (e) {}
     });
     localStorage.removeItem('mp_last_uid');
+    this._cache.clear();
     this._sessionGeminiKey = '';
+  },
+
+  // ==========================================
+  // 統一 Read-Through / Write-Through 快取核心 (Ponytail 單一資料源)
+  // ==========================================
+  async _getColCached(colName) {
+    if (this._cache.has(colName)) {
+      return this._cache.get(colName);
+    }
+
+    let list = null;
+    if (this._isCloudReady()) {
+      try {
+        const snap = await this._col(colName).get();
+        list = [];
+        snap.forEach((doc) => {
+          list.push(colName === 'progress' ? { unitId: doc.id, ...doc.data() } : doc.data());
+        });
+        this._setLocal(colName, list);
+      } catch (e) {
+        console.warn(`[DB] 讀取 Firestore ${colName} 失敗，使用 LocalStorage:`, e);
+      }
+    }
+
+    if (!list) {
+      list = this._getLocal(colName) || [];
+    }
+
+    this._cache.set(colName, list);
+    return list;
+  },
+
+  async _upsertDoc(colName, idKey, docObj, merge = false) {
+    const id = String(docObj[idKey]);
+    if (this._isCloudReady()) {
+      try {
+        await this._col(colName).doc(id).set(docObj, merge ? { merge: true } : undefined);
+      } catch (e) {
+        console.warn(`[DB] 寫入 Firestore ${colName}/${id} 失敗:`, e);
+      }
+    }
+
+    const base = this._cache.has(colName) ? [...this._cache.get(colName)] : [...(this._getLocal(colName) || [])];
+    const idx = base.findIndex((item) => String(item[idKey]) === id);
+    if (idx >= 0) base[idx] = merge ? { ...base[idx], ...docObj } : docObj;
+    else base.push(docObj);
+
+    this._cache.set(colName, base);
+    this._setLocal(colName, base);
+    return docObj;
+  },
+
+  async _deleteDoc(colName, idKey, id) {
+    const targetId = String(id);
+    if (this._isCloudReady()) {
+      try {
+        await this._col(colName).doc(targetId).delete();
+      } catch (e) {
+        console.warn(`[DB] 刪除 Firestore ${colName}/${targetId} 失敗:`, e);
+      }
+    }
+
+    const base = this._cache.has(colName) ? this._cache.get(colName) : (this._getLocal(colName) || []);
+    const next = base.filter((item) => String(item[idKey]) !== targetId);
+    this._cache.set(colName, next);
+    this._setLocal(colName, next);
+    return true;
+  },
+
+  async preloadAll() {
+    if (this.isCacheWarm()) return true;
+    if (this._preloadInFlight) return await this._preloadInFlight;
+
+    const task = Promise.all([
+      this.getAllConfig(),
+      this.getSyllabus(),
+      this._getColCached('progress'),
+      this._getColCached('studyLogs'),
+      this._getColCached('reviewCards'),
+      this._getColCached('examResults')
+    ]).then(() => true);
+
+    this._preloadInFlight = task;
+    try {
+      return await task;
+    } finally {
+      if (this._preloadInFlight === task) this._preloadInFlight = null;
+    }
   },
 
   // ==========================================
@@ -84,11 +189,8 @@ const DB = {
     const cleaned = (key || '').trim();
     this._sessionGeminiKey = cleaned;
     try {
-      if (cleaned) {
-        sessionStorage.setItem(SESSION_GEMINI_KEY, cleaned);
-      } else {
-        sessionStorage.removeItem(SESSION_GEMINI_KEY);
-      }
+      if (cleaned) sessionStorage.setItem(SESSION_GEMINI_KEY, cleaned);
+      else sessionStorage.removeItem(SESSION_GEMINI_KEY);
     } catch (e) {}
     return cleaned;
   },
@@ -193,7 +295,6 @@ const DB = {
         oralPractices.length > 0 ||
         studyLogs.length > 0;
 
-      // 順手清除遺留頂層設定內的明文 API Key
       if (cfgDoc.exists && cfgDoc.data() && 'geminiApiKey' in cfgDoc.data()) {
         try {
           await dbInstance.collection('config').doc('settings').update({
@@ -218,7 +319,6 @@ const DB = {
       await this.syncToFirestore(dataset);
       return true;
     } catch (e) {
-      // 非遺留資料擁有者會收到 permission-denied，屬預期行為
       return false;
     }
   },
@@ -226,27 +326,22 @@ const DB = {
   // ==========================================
   // 資料庫初始化與跨裝置同步
   // ==========================================
-  _initInFlight: null,
-
   async init(forceSeeding = false) {
     if (!forceSeeding && this._initInFlight) {
       return await this._initInFlight;
     }
     const task = this._runInit(forceSeeding);
-    if (!forceSeeding) {
-      this._initInFlight = task;
-    }
+    if (!forceSeeding) this._initInFlight = task;
     try {
       return await task;
     } finally {
-      if (this._initInFlight === task) {
-        this._initInFlight = null;
-      }
+      if (this._initInFlight === task) this._initInFlight = null;
     }
   },
 
   async _runInit(forceSeeding = false) {
     this._purgeLocalStoredApiKey();
+    this.invalidateCache();
     const db = initFirebaseApp();
     await waitForInitialAuth();
 
@@ -269,12 +364,14 @@ const DB = {
             const migratedLegacy = await this._migrateLegacyTopLevelToUser();
             if (migratedLegacy) {
               await this.trySilentBrowserAutofill(false);
+              await this.preloadAll();
               return { success: true, message: '已將雲端舊版資料安全遷移至個人 Google 帳號空間並移除明文金鑰' };
             }
 
             if (this._hasLocalUserData()) {
               await this.pushLocalToFirebase();
               await this.trySilentBrowserAutofill(false);
+              await this.preloadAll();
               return { success: true, message: '已將本機學習資料同步至個人 Google 雲端空間' };
             }
 
@@ -292,11 +389,17 @@ const DB = {
             batch.set(this._col('config').doc('settings'), this._stripSecrets(DEFAULT_CONFIGS), { merge: true });
             await batch.commit();
           } else if (!this._hasLocalUserData()) {
-            // 新裝置登入已有雲端資料時，自動預熱本機離線快取
             await this.pullFirebaseToLocal();
+          } else {
+            const list = [];
+            syllabusSnap.forEach((doc) => list.push(doc.data()));
+            if (list.length > 0) {
+              this._cache.set('syllabus', list.toSorted((a, b) => Number(a.orderIndex) - Number(b.orderIndex)));
+            }
           }
 
           await this.trySilentBrowserAutofill(false);
+          await this.preloadAll();
           return { success: true, message: 'Google 帳號雲端空間連線成功' };
         }
       } catch (err) {
@@ -304,7 +407,6 @@ const DB = {
       }
     }
 
-    // 未登入或離線：LocalStorage 降級模式
     const localSyllabus = this._getLocal('syllabus');
     if (!localSyllabus || localSyllabus.length === 0 || forceSeeding) {
       this._setLocal('syllabus', DEFAULT_SYLLABUS);
@@ -312,6 +414,7 @@ const DB = {
         this._setLocal('config', this._stripSecrets(DEFAULT_CONFIGS));
       }
     }
+    await this.preloadAll();
     return {
       success: true,
       message: currentUser ? '本機離線快取模式' : '未登入 Google 帳號，目前使用本機暫存模式'
@@ -327,36 +430,33 @@ const DB = {
   },
 
   // ==========================================
-  // Config 設定存取 (嚴格攔截 geminiApiKey)
+  // Config 設定存取 (嚴格攔截 geminiApiKey + 記憶體快取)
   // ==========================================
-  async getConfig(key) {
-    if (key === 'geminiApiKey') {
-      return this.getGeminiKey();
-    }
-    if (this._isCloudReady()) {
-      try {
-        const doc = await this._col('config').doc('settings').get();
-        if (doc.exists && doc.data()[key] !== undefined) {
-          return doc.data()[key];
-        }
-      } catch (e) {
-        console.warn(`[DB] 讀取 Firestore Config 失敗 (${key}):`, e);
-      }
-    }
-    const local = this._stripSecrets(this._getLocal('config') || DEFAULT_CONFIGS);
-    return local[key] !== undefined ? local[key] : (DEFAULT_CONFIGS[key] || '');
-  },
-
   async getAllConfig() {
+    if (this._cache.has('config')) {
+      return { ...this._cache.get('config') };
+    }
+    let cfg = null;
     if (this._isCloudReady()) {
       try {
         const doc = await this._col('config').doc('settings').get();
         if (doc.exists) {
-          return this._stripSecrets({ ...DEFAULT_CONFIGS, ...doc.data() });
+          cfg = this._stripSecrets({ ...DEFAULT_CONFIGS, ...doc.data() });
+          this._setLocal('config', cfg);
         }
       } catch (e) {}
     }
-    return this._stripSecrets({ ...DEFAULT_CONFIGS, ...(this._getLocal('config') || {}) });
+    if (!cfg) {
+      cfg = this._stripSecrets({ ...DEFAULT_CONFIGS, ...(this._getLocal('config') || {}) });
+    }
+    this._cache.set('config', cfg);
+    return { ...cfg };
+  },
+
+  async getConfig(key) {
+    if (key === 'geminiApiKey') return this.getGeminiKey();
+    const all = await this.getAllConfig();
+    return all[key] !== undefined ? all[key] : (DEFAULT_CONFIGS[key] || '');
   },
 
   async saveConfig(key, value) {
@@ -365,9 +465,10 @@ const DB = {
       return true;
     }
 
-    const local = this._stripSecrets(this._getLocal('config') || DEFAULT_CONFIGS);
-    local[key] = value;
-    this._setLocal('config', local);
+    const cur = await this.getAllConfig();
+    const updated = this._stripSecrets({ ...cur, [key]: value });
+    this._cache.set('config', updated);
+    this._setLocal('config', updated);
 
     if (this._isCloudReady()) {
       try {
@@ -379,57 +480,48 @@ const DB = {
     return true;
   },
 
-  // ==========================================
-  // 課綱 (Syllabus)
-  // ==========================================
-  async getSyllabus() {
+  async saveConfigs(partialObj) {
+    const cleanPatch = this._stripSecrets(partialObj);
+    const cur = await this.getAllConfig();
+    const updated = this._stripSecrets({ ...cur, ...cleanPatch });
+    this._cache.set('config', updated);
+    this._setLocal('config', updated);
+
     if (this._isCloudReady()) {
       try {
-        const snap = await this._col('syllabus').get();
-        if (!snap.empty) {
-          const list = [];
-          snap.forEach((doc) => list.push(doc.data()));
-          return list.sort((a, b) => Number(a.orderIndex) - Number(b.orderIndex));
-        }
+        await this._col('config').doc('settings').set(cleanPatch, { merge: true });
       } catch (e) {
-        console.warn('[DB] 讀取 Firestore Syllabus 失敗，使用 LocalStorage:', e);
+        console.warn('[DB] 批次寫入 Firestore Config 失敗:', e);
       }
     }
-    let local = this._getLocal('syllabus');
-    if (!local || local.length === 0) {
-      this._setLocal('syllabus', DEFAULT_SYLLABUS);
-      local = DEFAULT_SYLLABUS;
-    }
-    return [...local].sort((a, b) => Number(a.orderIndex) - Number(b.orderIndex));
+    return true;
   },
 
   // ==========================================
-  // 學習進度 (Progress)
+  // 課綱 (Syllabus) & 學習進度 (Progress)
   // ==========================================
-  async getRawProgressRecords() {
-    if (this._isCloudReady()) {
-      try {
-        const snap = await this._col('progress').get();
-        const records = [];
-        snap.forEach((doc) => records.push({ unitId: doc.id, ...doc.data() }));
-        return records;
-      } catch (e) {
-        console.warn('[DB] 讀取 Firestore Progress 失敗，使用 LocalStorage:', e);
-      }
+  async getSyllabus() {
+    const list = await this._getColCached('syllabus');
+    if (!list || list.length === 0) {
+      const sorted = DEFAULT_SYLLABUS.toSorted((a, b) => Number(a.orderIndex) - Number(b.orderIndex));
+      this._cache.set('syllabus', sorted);
+      this._setLocal('syllabus', sorted);
+      return sorted;
     }
-    return this._getLocal('progress') || [];
+    return list.toSorted((a, b) => Number(a.orderIndex) - Number(b.orderIndex));
+  },
+
+  async getRawProgressRecords() {
+    return await this._getColCached('progress');
   },
 
   async getProgress() {
-    const syllabus = await this.getSyllabus();
-    const rawList = await this.getRawProgressRecords();
-    const progressMap = {};
-    rawList.forEach((p) => {
-      progressMap[p.unitId] = p;
-    });
+    const [syllabus, rawList] = await Promise.all([this.getSyllabus(), this.getRawProgressRecords()]);
+    const progressMap = new Map();
+    rawList.forEach((p) => progressMap.set(p.unitId, p));
 
     return syllabus.map((unit) => {
-      const prog = progressMap[unit.unitId] || {};
+      const prog = progressMap.get(unit.unitId) || {};
       return {
         ...unit,
         status: prog.status || 'not_started',
@@ -478,19 +570,7 @@ const DB = {
       updatedAt: new Date().toISOString()
     };
 
-    if (this._isCloudReady()) {
-      try {
-        await this._col('progress').doc(unitId).set(dataToSave, { merge: true });
-      } catch (e) {
-        console.warn('[DB] 寫入 Firestore Progress 失敗:', e);
-      }
-    }
-
-    const localProg = this._getLocal('progress') || [];
-    const idx = localProg.findIndex((p) => p.unitId === unitId);
-    if (idx >= 0) localProg[idx] = dataToSave;
-    else localProg.push(dataToSave);
-    this._setLocal('progress', localProg);
+    await this._upsertDoc('progress', 'unitId', dataToSave, true);
 
     if (addMinutes > 0) {
       await this.addManualStudyLog(unitId, addMinutes, `學習單元：${unitId}（累計 ${addMinutes} 分鐘）`);
@@ -514,19 +594,7 @@ const DB = {
       updatedAt: new Date().toISOString()
     };
 
-    if (this._isCloudReady()) {
-      try {
-        await this._col('progress').doc(unitId).set(dataToSave, { merge: true });
-      } catch (e) {
-        console.warn('[DB] 寫入 Firestore StudyGuide 失敗:', e);
-      }
-    }
-
-    const localProg = this._getLocal('progress') || [];
-    const idx = localProg.findIndex((p) => p.unitId === unitId);
-    if (idx >= 0) localProg[idx] = { ...localProg[idx], ...dataToSave };
-    else localProg.push(dataToSave);
-    this._setLocal('progress', localProg);
+    await this._upsertDoc('progress', 'unitId', dataToSave, true);
     return { success: true, data: dataToSave };
   },
 
@@ -534,35 +602,22 @@ const DB = {
   // 練習題庫 (Questions)
   // ==========================================
   async getQuestions(moduleId, topicId) {
-    let allQs = [];
-    if (this._isCloudReady()) {
-      try {
-        const snap = await this._col('questions').get();
-        snap.forEach((doc) => allQs.push(doc.data()));
-      } catch (e) {
-        console.warn('[DB] 讀取 Firestore Questions 失敗，使用 LocalStorage:', e);
-        allQs = this._getLocal('questions') || [];
-      }
-    } else {
-      allQs = this._getLocal('questions') || [];
-    }
+    const allQs = await this._getColCached('questions');
+    if (!moduleId && !topicId) return [...allQs];
+
+    const targetMod = moduleId ? String(moduleId).trim().toUpperCase() : '';
+    const targetTopic = topicId ? String(topicId).trim().toUpperCase() : '';
 
     return allQs.filter((q) => {
       const qMod = q.moduleId ? String(q.moduleId).trim().toUpperCase() : '';
       const qTopic = q.topicId ? String(q.topicId).trim().toUpperCase() : '';
-      const targetMod = moduleId ? String(moduleId).trim().toUpperCase() : '';
-      const targetTopic = topicId ? String(topicId).trim().toUpperCase() : '';
-
-      const matchMod = !moduleId || qMod === targetMod;
-      const matchTopic = !topicId || qTopic === targetTopic;
-      return matchMod && matchTopic;
+      return (!targetMod || qMod === targetMod) && (!targetTopic || qTopic === targetTopic);
     });
   },
 
   async addManualQuestion(questionObj) {
-    const qId = crypto.randomUUID();
     const newQ = {
-      questionId: qId,
+      questionId: crypto.randomUUID(),
       moduleId: questionObj.moduleId,
       topicId: questionObj.topicId,
       unitId: questionObj.unitId || '',
@@ -579,24 +634,11 @@ const DB = {
       verified: true,
       createdAt: new Date().toISOString().split('T')[0]
     };
-
-    if (this._isCloudReady()) {
-      try {
-        await this._col('questions').doc(qId).set(newQ);
-      } catch (e) {
-        console.warn('[DB] 寫入 Firestore Question 失敗:', e);
-      }
-    }
-
-    const local = this._getLocal('questions') || [];
-    local.push(newQ);
-    this._setLocal('questions', local);
-    return newQ;
+    return await this._upsertDoc('questions', 'questionId', newQ);
   },
 
   async insertQuestions(questionsArray) {
     if (!questionsArray || questionsArray.length === 0) return true;
-
     if (this._isCloudReady()) {
       try {
         await this._batchWriteCollection('questions', questionsArray, 'questionId');
@@ -604,42 +646,23 @@ const DB = {
         console.warn('[DB] 批次寫入 Firestore Questions 失敗:', e);
       }
     }
-
-    const local = this._getLocal('questions') || [];
-    questionsArray.forEach((q) => local.push(q));
-    this._setLocal('questions', local);
+    const existing = await this._getColCached('questions');
+    const next = [...existing, ...questionsArray];
+    this._cache.set('questions', next);
+    this._setLocal('questions', next);
     return true;
   },
 
   async verifyQuestion(questionId) {
-    if (this._isCloudReady()) {
-      try {
-        await this._col('questions').doc(questionId).update({ verified: true });
-      } catch (e) {
-        console.warn('[DB] 更新 Firestore 題目驗證狀態失敗:', e);
-      }
-    }
-    const local = this._getLocal('questions') || [];
-    const q = local.find((item) => item.questionId === questionId);
-    if (q) {
-      q.verified = true;
-      this._setLocal('questions', local);
-    }
+    const list = await this._getColCached('questions');
+    const target = list.find((item) => item.questionId === questionId);
+    if (!target) return false;
+    await this._upsertDoc('questions', 'questionId', { ...target, verified: true }, true);
     return true;
   },
 
   async deleteQuestion(questionId) {
-    if (this._isCloudReady()) {
-      try {
-        await this._col('questions').doc(questionId).delete();
-      } catch (e) {
-        console.warn('[DB] 刪除 Firestore Question 失敗:', e);
-      }
-    }
-    let local = this._getLocal('questions') || [];
-    local = local.filter((q) => q.questionId !== questionId);
-    this._setLocal('questions', local);
-    return true;
+    return await this._deleteDoc('questions', 'questionId', questionId);
   },
 
   async getUnitQuiz(unitId, moduleId, topicId) {
@@ -673,7 +696,6 @@ const DB = {
     }
 
     let examQuestions = [];
-
     if (examType === 'module') {
       if (!moduleId) throw new Error('模組測驗必須指定模組 ID');
       const moduleQs = allQuestions.filter((q) => q.moduleId === moduleId);
@@ -723,10 +745,7 @@ const DB = {
 
   async submitExam(examType, userAnswers, timeSpent, moduleId) {
     const allQuestions = await this.getQuestions();
-    const qMap = {};
-    allQuestions.forEach((q) => {
-      qMap[q.questionId] = q;
-    });
+    const qMap = new Map(allQuestions.map((q) => [q.questionId, q]));
 
     let correctCount = 0;
     const totalQuestions = userAnswers.length;
@@ -735,17 +754,17 @@ const DB = {
     const moduleTotalMap = {};
 
     userAnswers.forEach((ua) => {
-      const q = qMap[ua.questionId];
+      const q = qMap.get(ua.questionId);
       if (!q) return;
 
-      const isCorrect = ua.selectedOption &&
-        String(ua.selectedOption).toUpperCase() === String(q.correctAnswer).toUpperCase();
+      const isCorrect = Boolean(
+        ua.selectedOption &&
+        String(ua.selectedOption).toUpperCase() === String(q.correctAnswer).toUpperCase()
+      );
       if (isCorrect) correctCount++;
 
       moduleTotalMap[q.moduleId] = (moduleTotalMap[q.moduleId] || 0) + 1;
-      if (isCorrect) {
-        moduleCorrectMap[q.moduleId] = (moduleCorrectMap[q.moduleId] || 0) + 1;
-      }
+      if (isCorrect) moduleCorrectMap[q.moduleId] = (moduleCorrectMap[q.moduleId] || 0) + 1;
 
       detailedResults.push({
         questionId: q.questionId,
@@ -774,9 +793,8 @@ const DB = {
       };
     }
 
-    const examId = crypto.randomUUID();
     const examRecord = {
-      examId,
+      examId: crypto.randomUUID(),
       examType,
       moduleId: moduleId || '',
       date: new Date().toISOString().split('T')[0],
@@ -789,35 +807,12 @@ const DB = {
       createdAt: new Date().toISOString()
     };
 
-    if (this._isCloudReady()) {
-      try {
-        await this._col('examResults').doc(examId).set(examRecord);
-      } catch (e) {
-        console.warn('[DB] 儲存 Firestore 測驗結果失敗:', e);
-      }
-    }
-
-    const localExams = this._getLocal('examResults') || [];
-    localExams.push(examRecord);
-    this._setLocal('examResults', localExams);
-
+    await this._upsertDoc('examResults', 'examId', examRecord);
     return examRecord;
   },
 
   async getExamResults() {
-    let data = [];
-    if (this._isCloudReady()) {
-      try {
-        const snap = await this._col('examResults').get();
-        snap.forEach((doc) => data.push(doc.data()));
-      } catch (e) {
-        console.warn('[DB] 讀取 Firestore 測驗紀錄失敗，使用 LocalStorage:', e);
-        data = this._getLocal('examResults') || [];
-      }
-    } else {
-      data = this._getLocal('examResults') || [];
-    }
-
+    const data = await this._getColCached('examResults');
     return data
       .map((row) => ({
         ...row,
@@ -831,32 +826,21 @@ const DB = {
             : (row.moduleBreakdown || {}),
         details: Array.isArray(row.details) ? row.details : []
       }))
-      .sort((a, b) => new Date(b.createdAt || b.date) - new Date(a.createdAt || a.date));
+      .toSorted((a, b) => new Date(b.createdAt || b.date) - new Date(a.createdAt || a.date));
   },
 
   // ==========================================
   // 知識卡片 (Review Cards / SM-2)
   // ==========================================
   async getReviewCards() {
-    let cards = [];
-    if (this._isCloudReady()) {
-      try {
-        const snap = await this._col('reviewCards').get();
-        snap.forEach((doc) => cards.push(doc.data()));
-      } catch (e) {
-        console.warn('[DB] 讀取 Firestore ReviewCards 失敗，使用 LocalStorage:', e);
-        cards = this._getLocal('reviewCards') || [];
-      }
-    } else {
-      cards = this._getLocal('reviewCards') || [];
-    }
-
+    const cards = await this._getColCached('reviewCards');
+    const fallbackDate = new Date().toISOString().split('T')[0];
     return cards.map((c) => ({
       ...c,
       interval: Number(c.interval || 1),
       easeFactor: Number(c.easeFactor || 2.5),
       repetitions: Number(c.repetitions || 0),
-      nextReviewDate: c.nextReviewDate || new Date().toISOString().split('T')[0]
+      nextReviewDate: c.nextReviewDate || fallbackDate
     }));
   },
 
@@ -879,19 +863,7 @@ const DB = {
       repetitions: 0,
       updatedAt: new Date().toISOString()
     };
-
-    if (this._isCloudReady()) {
-      try {
-        await this._col('reviewCards').doc(card.cardId).set(card);
-      } catch (e) {
-        console.warn('[DB] 寫入 Firestore ReviewCard 失敗:', e);
-      }
-    }
-
-    const local = this._getLocal('reviewCards') || [];
-    local.push(card);
-    this._setLocal('reviewCards', local);
-    return card;
+    return await this._upsertDoc('reviewCards', 'cardId', card);
   },
 
   async insertReviewCards(cardsArray) {
@@ -903,39 +875,28 @@ const DB = {
         console.warn('[DB] 批次寫入 Firestore ReviewCards 失敗:', e);
       }
     }
-    const local = this._getLocal('reviewCards') || [];
-    cardsArray.forEach((c) => local.push(c));
-    this._setLocal('reviewCards', local);
+    const existing = await this._getColCached('reviewCards');
+    const next = [...existing, ...cardsArray];
+    this._cache.set('reviewCards', next);
+    this._setLocal('reviewCards', next);
     return true;
   },
 
   async deleteReviewCard(cardId) {
-    if (this._isCloudReady()) {
-      try {
-        await this._col('reviewCards').doc(cardId).delete();
-      } catch (e) {
-        console.warn('[DB] 刪除 Firestore ReviewCard 失敗:', e);
-      }
-    }
-    let local = this._getLocal('reviewCards') || [];
-    local = local.filter((c) => c.cardId !== cardId);
-    this._setLocal('reviewCards', local);
-    return true;
+    return await this._deleteDoc('reviewCards', 'cardId', cardId);
   },
 
-  async submitReviewCardScore(cardId, score) {
-    score = Number(score);
-    if (score < 0 || score > 5) throw new Error('評分必須在 0 到 5 之間');
+  computeSM2Next(card, score) {
+    const s = Number(score);
+    if (!Number.isFinite(s) || s < 0 || s > 5) {
+      throw new Error('評分必須在 0 到 5 之間');
+    }
 
-    const cards = await this.getReviewCards();
-    const card = cards.find((c) => c.cardId === cardId);
-    if (!card) throw new Error('找不到指定的知識卡片: ' + cardId);
+    let repetitions = Number(card.repetitions || 0);
+    let interval = Number(card.interval || 1);
+    let easeFactor = Number(card.easeFactor || 2.5);
 
-    let repetitions = card.repetitions;
-    let interval = card.interval;
-    let easeFactor = card.easeFactor;
-
-    if (score >= 3) {
+    if (s >= 3) {
       if (repetitions === 0) interval = 1;
       else if (repetitions === 1) interval = 6;
       else interval = Math.round(interval * easeFactor);
@@ -945,146 +906,92 @@ const DB = {
       interval = 1;
     }
 
-    easeFactor = easeFactor + (0.1 - (5 - score) * (0.08 + (5 - score) * 0.02));
+    easeFactor = easeFactor + (0.1 - (5 - s) * (0.08 + (5 - s) * 0.02));
     if (easeFactor < 1.3) easeFactor = 1.3;
 
     const nextDate = new Date();
     nextDate.setDate(nextDate.getDate() + interval);
 
-    const updatedData = {
+    return {
       interval,
       easeFactor: Math.round(easeFactor * 100) / 100,
       repetitions,
       nextReviewDate: nextDate.toISOString().split('T')[0],
       updatedAt: new Date().toISOString()
     };
+  },
 
-    if (this._isCloudReady()) {
-      try {
-        await this._col('reviewCards').doc(cardId).update(updatedData);
-      } catch (e) {
-        console.warn('[DB] 更新 Firestore ReviewCard SM-2 排程失敗:', e);
-      }
-    }
+  async submitReviewCardScore(cardId, score) {
+    const cards = await this.getReviewCards();
+    const card = cards.find((c) => c.cardId === cardId);
+    if (!card) throw new Error('找不到指定的知識卡片: ' + cardId);
 
-    const local = this._getLocal('reviewCards') || [];
-    const cIdx = local.findIndex((c) => c.cardId === cardId);
-    if (cIdx >= 0) {
-      local[cIdx] = { ...local[cIdx], ...updatedData };
-      this._setLocal('reviewCards', local);
-    }
-
+    const updatedData = this.computeSM2Next(card, score);
+    await this._upsertDoc('reviewCards', 'cardId', { ...card, ...updatedData }, true);
     return { success: true, data: updatedData };
   },
 
   // ==========================================
-  // 口試模擬 (Oral Practice)
+  // 口試模擬 (Oral Practice) & 學習日誌 (Study Logs)
   // ==========================================
   async getOralPractices() {
-    let data = [];
-    if (this._isCloudReady()) {
-      try {
-        const snap = await this._col('oralPractices').get();
-        snap.forEach((doc) => data.push(doc.data()));
-      } catch (e) {
-        console.warn('[DB] 讀取 Firestore OralPractices 失敗，使用 LocalStorage:', e);
-        data = this._getLocal('oralPractices') || [];
-      }
-    } else {
-      data = this._getLocal('oralPractices') || [];
-    }
-
+    const data = await this._getColCached('oralPractices');
     return data
       .map((row) => ({
         ...row,
         aiScore: Number(row.aiScore || 0),
         aiFeedback:
           typeof row.aiFeedback === 'string'
-            ? JSON.parse(row.aiFeedback || '{}')
+            ? (() => { try { return JSON.parse(row.aiFeedback); } catch (e) { return { feedback: row.aiFeedback }; } })()
             : (row.aiFeedback || {})
       }))
-      .sort((a, b) => new Date(b.createdAt || b.date) - new Date(a.createdAt || a.date));
+      .toSorted((a, b) => new Date(b.createdAt || b.date) - new Date(a.createdAt || a.date));
   },
 
   async saveOralPractice(record) {
-    if (this._isCloudReady()) {
-      try {
-        await this._col('oralPractices').doc(record.practiceId).set(record);
-      } catch (e) {
-        console.warn('[DB] 儲存 Firestore OralPractice 失敗:', e);
-      }
-    }
-    const local = this._getLocal('oralPractices') || [];
-    local.push(record);
-    this._setLocal('oralPractices', local);
-    return record;
+    return await this._upsertDoc('oralPractices', 'practiceId', record);
   },
 
-  // ==========================================
-  // 學習日誌 (Study Logs)
-  // ==========================================
   async getStudyLogs() {
-    let data = [];
-    if (this._isCloudReady()) {
-      try {
-        const snap = await this._col('studyLogs').get();
-        snap.forEach((doc) => data.push(doc.data()));
-      } catch (e) {
-        console.warn('[DB] 讀取 Firestore StudyLogs 失敗，使用 LocalStorage:', e);
-        data = this._getLocal('studyLogs') || [];
-      }
-    } else {
-      data = this._getLocal('studyLogs') || [];
-    }
-
+    const data = await this._getColCached('studyLogs');
     return data
       .map((row) => ({
         ...row,
         minutes: Number(row.minutes || 0),
         date: row.date || ''
       }))
-      .sort((a, b) => new Date(b.createdAt || b.date) - new Date(a.createdAt || a.date));
+      .toSorted((a, b) => new Date(b.createdAt || b.date) - new Date(a.createdAt || a.date));
   },
 
   async addManualStudyLog(unitId, minutes, journalEntry) {
-    const today = new Date().toISOString().split('T')[0];
-    const logId = crypto.randomUUID();
     const record = {
-      logId,
-      date: today,
+      logId: crypto.randomUUID(),
+      date: new Date().toISOString().split('T')[0],
       unitId: unitId || 'General',
       minutes: Number(minutes || 0),
       journalEntry: journalEntry || '',
       createdAt: new Date().toISOString()
     };
-
-    if (this._isCloudReady()) {
-      try {
-        await this._col('studyLogs').doc(logId).set(record);
-      } catch (e) {
-        console.warn('[DB] 儲存 Firestore StudyLog 失敗:', e);
-      }
-    }
-
-    const local = this._getLocal('studyLogs') || [];
-    local.push(record);
-    this._setLocal('studyLogs', local);
-    return record;
+    return await this._upsertDoc('studyLogs', 'logId', record);
   },
 
   // ==========================================
-  // 儀表板數據整合 (Dashboard Data)
+  // 儀表板數據整合 (全平行讀取，零重複查詢)
   // ==========================================
   async getDashboardData() {
-    const progressList = await this.getProgress();
-    const logs = await this.getStudyLogs();
-    const examResults = await this.getExamResults();
-    const allCards = await this.getReviewCards();
+    const [progressList, logs, examResults, allCards, cfg] = await Promise.all([
+      this.getProgress(),
+      this.getStudyLogs(),
+      this.getExamResults(),
+      this.getReviewCards(),
+      this.getAllConfig()
+    ]);
+
     const todayStr = new Date().toISOString().split('T')[0];
     const dueCards = allCards.filter((c) => !c.nextReviewDate || c.nextReviewDate <= todayStr);
 
-    const examDateStr = (await this.getConfig('examDate')) || '2027-10-01';
-    const dailyGoal = Number((await this.getConfig('dailyGoalMinutes')) || 45);
+    const examDateStr = cfg.examDate || '2027-10-01';
+    const dailyGoal = Number(cfg.dailyGoalMinutes || 45);
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -1092,10 +999,22 @@ const DB = {
     examDate.setHours(0, 0, 0, 0);
     const daysRemaining = Math.max(0, Math.ceil((examDate.getTime() - today.getTime()) / (1000 * 3600 * 24)));
 
+    const statusCounts = { completed: 0, in_progress: 0, review: 0, not_started: 0 };
+    progressList.forEach((p) => {
+      const s = p.status in statusCounts ? p.status : 'not_started';
+      statusCounts[s]++;
+    });
+
     const totalUnits = progressList.length;
-    const completedUnits = progressList.filter((p) => p.status === 'completed').length;
-    const inProgressUnits = progressList.filter((p) => p.status === 'in_progress').length;
+    const completedUnits = statusCounts.completed;
     const overallProgressPercent = totalUnits > 0 ? Math.round((completedUnits / totalUnits) * 100) : 0;
+
+    // 優先續讀進行中單元，其次需複習，再來下一個未開始單元
+    const nextUnit =
+      progressList.find((p) => p.status === 'in_progress') ||
+      progressList.find((p) => p.status === 'review') ||
+      progressList.find((p) => p.status === 'not_started') ||
+      null;
 
     const moduleProgress = {};
     const modules = typeof MODULE_NAMES !== 'undefined'
@@ -1114,47 +1033,36 @@ const DB = {
 
     let totalMinutes = 0;
     let todayMinutes = 0;
+    const minutesByDate = new Map();
     logs.forEach((log) => {
       totalMinutes += log.minutes;
       if (log.date === todayStr) todayMinutes += log.minutes;
+      if (log.date) minutesByDate.set(log.date, (minutesByDate.get(log.date) || 0) + log.minutes);
     });
 
-    const uniqueDates = [...new Set(logs.map((l) => l.date))].sort((a, b) => new Date(b) - new Date(a));
     let streak = 0;
     const checkDate = new Date();
     checkDate.setHours(0, 0, 0, 0);
     const todayDateStr = checkDate.toISOString().split('T')[0];
-    const yesterday = new Date();
+    const yesterday = new Date(checkDate);
     yesterday.setDate(yesterday.getDate() - 1);
     const yesterdayStr = yesterday.toISOString().split('T')[0];
 
-    const hasToday = uniqueDates.includes(todayDateStr);
-    const hasYesterday = uniqueDates.includes(yesterdayStr);
-
-    if (hasToday || hasYesterday) {
-      const currentCheck = hasToday ? checkDate : yesterday;
-      while (true) {
-        const currentStr = currentCheck.toISOString().split('T')[0];
-        if (uniqueDates.includes(currentStr)) {
-          streak++;
-          currentCheck.setDate(currentCheck.getDate() - 1);
-        } else {
-          break;
-        }
+    if (minutesByDate.has(todayDateStr) || minutesByDate.has(yesterdayStr)) {
+      const cursor = minutesByDate.has(todayDateStr) ? checkDate : yesterday;
+      while (minutesByDate.has(cursor.toISOString().split('T')[0])) {
+        streak++;
+        cursor.setDate(cursor.getDate() - 1);
       }
     }
 
-    const last7Days = [];
+    const weeklyDailyMinutes = [];
     for (let i = 6; i >= 0; i--) {
       const d = new Date();
       d.setDate(d.getDate() - i);
-      last7Days.push(d.toISOString().split('T')[0]);
+      const dateStr = d.toISOString().split('T')[0];
+      weeklyDailyMinutes.push({ date: dateStr.substring(5), minutes: minutesByDate.get(dateStr) || 0 });
     }
-
-    const weeklyDailyMinutes = last7Days.map((dateStr) => {
-      const sum = logs.filter((l) => l.date === dateStr).reduce((acc, log) => acc + log.minutes, 0);
-      return { date: dateStr.substring(5), minutes: sum };
-    });
 
     const weeklyTotalMinutes = weeklyDailyMinutes.reduce((acc, d) => acc + d.minutes, 0);
     const recentExams = examResults.slice(0, 5);
@@ -1163,12 +1071,36 @@ const DB = {
         ? Math.round(recentExams.reduce((acc, r) => acc + r.score, 0) / recentExams.length)
         : 0;
 
+    // 彙整近 5 次模擬考各模組答對率，供儀表板顯示弱點排行
+    const modAcc = {};
+    recentExams.forEach((ex) => {
+      const mb = ex.moduleBreakdown || {};
+      Object.keys(mb).forEach((mId) => {
+        if (!modAcc[mId]) modAcc[mId] = { correct: 0, total: 0 };
+        modAcc[mId].correct += Number(mb[mId].correct || 0);
+        modAcc[mId].total += Number(mb[mId].total || 0);
+      });
+    });
+    const weakModules = Object.entries(modAcc)
+      .filter(([, v]) => v.total > 0)
+      .map(([mId, v]) => ({
+        moduleId: mId,
+        name: (typeof MODULE_NAMES !== 'undefined' && MODULE_NAMES[mId]) || mId,
+        rate: Math.round((v.correct / v.total) * 100),
+        total: v.total
+      }))
+      .toSorted((a, b) => a.rate - b.rate)
+      .slice(0, 4);
+
     return {
       daysRemaining,
       overallProgressPercent,
       completedUnits,
       totalUnits,
-      inProgressUnits,
+      inProgressUnits: statusCounts.in_progress,
+      statusCounts,
+      nextUnit,
+      weakModules,
       moduleProgress,
       totalHours: Math.round((totalMinutes / 60) * 10) / 10,
       todayMinutes,
@@ -1176,6 +1108,7 @@ const DB = {
       streak,
       weeklyDailyMinutes,
       averageExamScore,
+      recentExamCount: recentExams.length,
       dueReviewCardsCount: dueCards.length,
       totalReviewCardsCount: allCards.length,
       dailyGoalMinutes: dailyGoal
@@ -1314,14 +1247,12 @@ const DB = {
     const data = this._normalizeDataset(rawData);
     const cleanConfig = this._stripSecrets(data.config);
 
+    this._cache.set('config', cleanConfig);
     this._setLocal('config', cleanConfig);
-    this._setLocal('syllabus', data.syllabus);
-    this._setLocal('progress', data.progress);
-    this._setLocal('questions', data.questions);
-    this._setLocal('reviewCards', data.reviewCards);
-    this._setLocal('examResults', data.examResults);
-    this._setLocal('oralPractices', data.oralPractices);
-    this._setLocal('studyLogs', data.studyLogs);
+    USER_COLLECTIONS.forEach((k) => {
+      this._cache.set(k, data[k]);
+      this._setLocal(k, data[k]);
+    });
 
     if (!this._isCloudReady()) {
       throw new Error('尚未登入 Google 帳號或尚未連線至 Firestore，僅儲存於本機');
@@ -1329,13 +1260,15 @@ const DB = {
 
     await this._col('config').doc('settings').set(cleanConfig, { merge: true });
     await this._purgeCloudApiKeyField();
-    await this._batchWriteCollection('syllabus', data.syllabus, 'unitId');
-    await this._batchWriteCollection('progress', data.progress, 'unitId');
-    await this._batchWriteCollection('questions', data.questions, 'questionId');
-    await this._batchWriteCollection('reviewCards', data.reviewCards, 'cardId');
-    await this._batchWriteCollection('examResults', data.examResults, 'examId');
-    await this._batchWriteCollection('oralPractices', data.oralPractices, 'practiceId');
-    await this._batchWriteCollection('studyLogs', data.studyLogs, 'logId');
+    await Promise.all([
+      this._batchWriteCollection('syllabus', data.syllabus, 'unitId'),
+      this._batchWriteCollection('progress', data.progress, 'unitId'),
+      this._batchWriteCollection('questions', data.questions, 'questionId'),
+      this._batchWriteCollection('reviewCards', data.reviewCards, 'cardId'),
+      this._batchWriteCollection('examResults', data.examResults, 'examId'),
+      this._batchWriteCollection('oralPractices', data.oralPractices, 'practiceId'),
+      this._batchWriteCollection('studyLogs', data.studyLogs, 'logId')
+    ]);
 
     return {
       syllabus: data.syllabus.length,
@@ -1378,47 +1311,32 @@ const DB = {
     const fetchCol = async (name) => {
       const snap = await this._col(name).get();
       const arr = [];
-      snap.forEach((doc) => arr.push(doc.data()));
+      snap.forEach((doc) => arr.push(name === 'progress' ? { unitId: doc.id, ...doc.data() } : doc.data()));
       return arr;
     };
 
-    const configDoc = await this._col('config').doc('settings').get();
+    const [configDoc, ...colLists] = await Promise.all([
+      this._col('config').doc('settings').get(),
+      ...USER_COLLECTIONS.map((c) => fetchCol(c))
+    ]);
+
     const config = this._stripSecrets(
       configDoc.exists ? { ...DEFAULT_CONFIGS, ...configDoc.data() } : DEFAULT_CONFIGS
     );
-
-    const [syllabus, progress, questions, reviewCards, examResults, oralPractices, studyLogs] =
-      await Promise.all([
-        fetchCol('syllabus'),
-        fetchCol('progress'),
-        fetchCol('questions'),
-        fetchCol('reviewCards'),
-        fetchCol('examResults'),
-        fetchCol('oralPractices'),
-        fetchCol('studyLogs')
-      ]);
-
+    this._cache.set('config', config);
     this._setLocal('config', config);
-    if (syllabus.length > 0) this._setLocal('syllabus', syllabus);
-    this._setLocal('progress', progress);
-    this._setLocal('questions', questions);
-    this._setLocal('reviewCards', reviewCards);
-    this._setLocal('examResults', examResults);
-    this._setLocal('oralPractices', oralPractices);
-    this._setLocal('studyLogs', studyLogs);
 
-    return {
-      success: true,
-      counts: {
-        syllabus: syllabus.length,
-        progress: progress.length,
-        questions: questions.length,
-        reviewCards: reviewCards.length,
-        examResults: examResults.length,
-        oralPractices: oralPractices.length,
-        studyLogs: studyLogs.length
+    const counts = {};
+    USER_COLLECTIONS.forEach((col, i) => {
+      const list = colLists[i];
+      if (col !== 'syllabus' || list.length > 0) {
+        this._cache.set(col, list);
+        this._setLocal(col, list);
       }
-    };
+      counts[col] = list.length;
+    });
+
+    return { success: true, counts };
   },
 
   async migrateFromGoogleSheet(sheetIdOrUrl) {
@@ -1453,9 +1371,7 @@ const DB = {
         throw new Error(`試算表 ${sheetName} 未開放檢視權限（請暫時設為「知道連結的任何人可檢視」）`);
       }
       const parsed = JSON.parse(jsonMatch[1]);
-      if (parsed.status === 'error') {
-        return [];
-      }
+      if (parsed.status === 'error') return [];
       const cols = (parsed.table.cols || []).map((c) => (c.label || c.id || '').trim());
       const rows = parsed.table.rows || [];
       return rows.map((r) => {
@@ -1467,10 +1383,7 @@ const DB = {
           if (typeof val === 'string' && val.startsWith('Date(')) {
             const nums = val.match(/\d+/g);
             if (nums && nums.length >= 3) {
-              const y = nums[0];
-              const m = String(Number(nums[1]) + 1).padStart(2, '0');
-              const d = String(nums[2]).padStart(2, '0');
-              val = `${y}-${m}-${d}`;
+              val = `${nums[0]}-${String(Number(nums[1]) + 1).padStart(2, '0')}-${String(nums[2]).padStart(2, '0')}`;
             }
           }
           obj[key] = val === null || val === undefined ? '' : val;
@@ -1479,33 +1392,41 @@ const DB = {
       });
     };
 
+    const entries = Object.entries(sheetsMap);
+    const results = await Promise.all(entries.map(([sheetName]) => fetchSheetRows(sheetName)));
     const dataset = {};
-    for (const [sheetName, targetKey] of Object.entries(sheetsMap)) {
-      dataset[targetKey] = await fetchSheetRows(sheetName);
-    }
+    entries.forEach(([, targetKey], idx) => {
+      dataset[targetKey] = results[idx];
+    });
 
     const counts = await this.syncToFirestore(dataset);
     return { success: true, counts };
   },
 
   async getStorageStats() {
-    const local = {
-      progress: (this._getLocal('progress') || []).length,
-      questions: (this._getLocal('questions') || []).length,
-      reviewCards: (this._getLocal('reviewCards') || []).length,
-      examResults: (this._getLocal('examResults') || []).length,
-      oralPractices: (this._getLocal('oralPractices') || []).length,
-      studyLogs: (this._getLocal('studyLogs') || []).length
-    };
+    const cols = ['progress', 'questions', 'reviewCards', 'examResults', 'oralPractices', 'studyLogs'];
+    const local = {};
+    cols.forEach((c) => {
+      local[c] = (this._getLocal(c) || []).length;
+    });
 
     let cloud = null;
     if (this._isCloudReady()) {
       try {
-        const cols = ['progress', 'questions', 'reviewCards', 'examResults', 'oralPractices', 'studyLogs'];
-        const snaps = await Promise.all(cols.map((c) => this._col(c).get()));
+        const counts = await Promise.all(
+          cols.map(async (c) => {
+            const ref = this._col(c);
+            if (typeof ref.count === 'function') {
+              const agg = await ref.count().get();
+              return agg.data().count;
+            }
+            const snap = await ref.get();
+            return snap.size;
+          })
+        );
         cloud = {};
         cols.forEach((c, i) => {
-          cloud[c] = snaps[i].size;
+          cloud[c] = counts[i];
         });
       } catch (e) {
         cloud = null;
@@ -1516,19 +1437,34 @@ const DB = {
   },
 
   async exportAllDataJSON() {
-    const backup = {
-      version: '3.5',
-      exportedAt: new Date().toISOString(),
-      config: this._stripSecrets(await this.getAllConfig()),
-      syllabus: await this.getSyllabus(),
-      progress: await this.getRawProgressRecords(),
-      questions: await this.getQuestions(),
-      reviewCards: await this.getReviewCards(),
-      examResults: await this.getExamResults(),
-      oralPractices: await this.getOralPractices(),
-      studyLogs: await this.getStudyLogs()
-    };
-    return JSON.stringify(backup, null, 2);
+    const [config, syllabus, progress, questions, reviewCards, examResults, oralPractices, studyLogs] =
+      await Promise.all([
+        this.getAllConfig(),
+        this.getSyllabus(),
+        this.getRawProgressRecords(),
+        this.getQuestions(),
+        this.getReviewCards(),
+        this.getExamResults(),
+        this.getOralPractices(),
+        this.getStudyLogs()
+      ]);
+
+    return JSON.stringify(
+      {
+        version: '4.0',
+        exportedAt: new Date().toISOString(),
+        config: this._stripSecrets(config),
+        syllabus,
+        progress,
+        questions,
+        reviewCards,
+        examResults,
+        oralPractices,
+        studyLogs
+      },
+      null,
+      2
+    );
   },
 
   async importAllDataJSON(jsonStr) {
@@ -1541,20 +1477,18 @@ const DB = {
       if (this._isCloudReady()) {
         const counts = await this.syncToFirestore(data);
         return { success: true, message: `已完整還原並同步至個人雲端空間 (${counts.questions} 題庫 / ${counts.reviewCards} 閃卡)` };
-      } else {
-        const normalized = this._normalizeDataset(data);
-        this._setLocal('config', this._stripSecrets(normalized.config));
-        this._setLocal('syllabus', normalized.syllabus);
-        this._setLocal('progress', normalized.progress);
-        this._setLocal('questions', normalized.questions);
-        this._setLocal('reviewCards', normalized.reviewCards);
-        this._setLocal('examResults', normalized.examResults);
-        this._setLocal('oralPractices', normalized.oralPractices);
-        this._setLocal('studyLogs', normalized.studyLogs);
-        return { success: true, message: '資料庫已成功還原至本機儲存（不含任何 API Key）！' };
       }
+      const normalized = this._normalizeDataset(data);
+      const cleanCfg = this._stripSecrets(normalized.config);
+      this._cache.set('config', cleanCfg);
+      this._setLocal('config', cleanCfg);
+      USER_COLLECTIONS.forEach((k) => {
+        this._cache.set(k, normalized[k]);
+        this._setLocal(k, normalized[k]);
+      });
+      return { success: true, message: '資料庫已成功還原至本機儲存（不含任何 API Key）' };
     } catch (e) {
-      throw new Error('還原失敗: ' + e.message);
+      throw new Error('還原失敗: ' + e.message, { cause: e });
     }
   },
 

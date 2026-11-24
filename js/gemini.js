@@ -63,8 +63,7 @@ const GeminiService = {
       }
     }
 
-    const sep = baseUrl.includes('?') ? '&' : '?';
-    return await doFetch(`${baseUrl}${sep}key=${encodeURIComponent(apiKey)}`);
+    return await doFetch(baseUrl, { 'x-goog-api-key': apiKey });
   },
 
   getAuthStatus() {
@@ -116,7 +115,7 @@ const GeminiService = {
       if (fetchErr.message && (fetchErr.message.includes('逾時') || fetchErr.message.includes('授權'))) {
         throw fetchErr;
       }
-      throw new Error('無法連線至 Gemini API: ' + fetchErr.message);
+      throw new Error('無法連線至 Gemini API: ' + fetchErr.message, { cause: fetchErr });
     }
 
     const responseText = await response.text();
@@ -144,7 +143,7 @@ const GeminiService = {
       }
     } catch (e) {
       console.error('[GeminiService] JSON 解析失敗，原始回應:', responseText);
-      throw new Error('AI 回傳格式不符合預期 JSON: ' + e.message);
+      throw new Error('AI 回傳格式不符合預期 JSON: ' + e.message, { cause: e });
     }
   },
 
